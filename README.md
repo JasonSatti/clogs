@@ -1,40 +1,89 @@
 # clogs
 
-Colorized structured log formatter for Lambda JSON logs.
+`clogs` is a terminal formatter for Lambda-oriented JSON logs (especially Powertools style logs).
+
+It reads log lines from `stdin`, then renders a scan-friendly layout:
+
+```text
+timestamp LEVEL location               │ message
+                                        ↳ key=value
+```
+
+## Why use it
+
+When you run Lambda handlers locally, output can be noisy and hard to scan. `clogs` improves signal by:
+
+- keeping `timestamp LEVEL location │ message` aligned
+- moving repetitive metadata into a one-time **context** block
+- suppressing repeated tag values until they change
+- grouping startup noise under a startup heading
+- rendering Lambda return objects as a **return** block
 
 ## Install
 
+### Option 1: `uv tool`
+
 ```bash
-pipx install -e /path/to/clogs
+uv tool install .
+```
+
+### Option 2: `pipx`
+
+```bash
+pipx install .
 ```
 
 ## Usage
 
 ```bash
-# Pipe lambda output
-com sls invoke local -f clarity --stage prod --data '{}' | clogs
-
-# Verbose — show all fields on every line, no suppression
-com sls invoke local -f clarity --stage prod --data '{}' | clogs -v
+some-command-that-emits-lambda-logs 2>&1 | clogs
 ```
 
-## What it does
+Verbose mode disables suppression and shows all fields every time:
 
-- Parses JSON log lines and reformats as `timestamp LEVEL location │ message`
-- Color-codes log levels: `INFO` (green), `WARNING` (yellow), `ERROR` (red)
-- Detects constant fields across the first few log lines and promotes them to a **context block** at the top — suppressed from subsequent lines
-- Shows changed values once when they differ from context, then auto-suppresses
-- Extra metadata tags shown as `key=value` in muted purple under the message
-- Formats the **lambda return value** as a clean summary block
-- Parses Python stdlib logging (`INFO:root:message`) and Lambda runtime format (`[INFO] timestamp requestId [Thread] message`)
-- Collapses Python warnings into one-liners, suppresses ddtrace span dumps
-- Non-JSON lines pass through dimmed
+```bash
+some-command-that-emits-lambda-logs 2>&1 | clogs -v
+```
 
-## Customizing
+## Important shell caveat: `stderr` is separate
 
-Edit the top of `clogs.py`:
-- `COLORS` dict — 256-color ANSI codes ([reference](https://256colors.com))
-- `LOCATION_WIDTH` — column width for location (default 22)
-- `CONTEXT_BUFFER_SIZE` — how many JSON lines to buffer for constant detection (default 5)
-- `CONTEXT_FIELDS` — Powertools boilerplate fields to show once in context
-- `SUPPRESSED_FIELDS` — fields to always suppress (unless `-v`)
+With this pipeline:
+
+```bash
+cmd | clogs
+```
+
+only `stdout` is piped into `clogs`. `stderr` still goes directly to your terminal.
+
+To send both streams through `clogs`, redirect `stderr` to `stdout` first:
+
+```bash
+cmd 2>&1 | clogs
+```
+
+## Supported formats
+
+`clogs` intentionally targets team Lambda workflows and supports:
+
+- Powertools-style JSON logs (`{"level":...,"message":...}`)
+- Lambda runtime lines (`[INFO] timestamp requestId [Thread - ...] message`)
+- Python stdlib logs (`INFO:logger:message`)
+
+It also suppresses common noise patterns (ddtrace span dumps, ddtrace instrumentation banners, warning continuation lines, and bare `null` return output).
+
+## Customization
+
+Tune behavior in `clogslib/config.py`:
+
+- `COLORS`: ANSI palette
+- `LOCATION_WIDTH`: location column width
+- `CONTEXT_BUFFER_SIZE`: records used to infer constant context
+- `CONTEXT_FIELDS`: fields shown once in context mode
+
+## Development
+
+Run tests:
+
+```bash
+pytest
+```
