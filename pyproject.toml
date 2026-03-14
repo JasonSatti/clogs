@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clogs"
+version = "0.1.0"
+description = "Colorized structured log formatter for Lambda JSON logs"
+requires-python = ">=3.9"
+
+[project.scripts]
+clogs = "clogs:main"
