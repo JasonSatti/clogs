@@ -21,6 +21,11 @@ classifiers = [
 ]
 readme = "README.md"
 
+[project.urls]
+Homepage = "https://github.com/JasonSatti/clogs"
+Repository = "https://github.com/JasonSatti/clogs"
+Issues = "https://github.com/JasonSatti/clogs/issues"
+
 [project.scripts]
 clogs = "clogs.cli:main"
 

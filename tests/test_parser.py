@@ -120,3 +120,7 @@ class TestMultilineJsonStart:
     def test_bare_brace(self):
         parsed = parse_line("{")
         assert parsed.line_type == LineType.MULTILINE_JSON_START
+
+    def test_bare_bracket(self):
+        parsed = parse_line("[")
+        assert parsed.line_type == LineType.MULTILINE_JSON_START

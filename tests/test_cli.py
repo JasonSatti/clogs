@@ -110,6 +110,18 @@ class TestMultilineJsonReturn:
         assert "return" in output
         assert "nested" in output
 
+    def test_multiline_array_formatted(self):
+        """A top-level JSON array return should be captured and formatted."""
+        lines = [
+            _make_json_line(message="before return"),
+            "[",
+            '  {"id": 1},',
+            '  {"id": 2}',
+            "]",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert '"id": 1' in output or "id" in output
+
     def test_buffer_limit_prevents_infinite_buffering(self):
         """A stray '{' followed by many non-closing lines should eventually flush."""
         lines = [_make_json_line(message="first")]

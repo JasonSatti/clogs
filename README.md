@@ -1,14 +1,18 @@
 # clogs
 
-Colorized, condensed log formatting for AWS Lambda, Powertools, and Python logs.
+A terminal formatter for structured AWS Lambda logs. Pipe in noisy
+Powertools / Lambda JSON and get colorized, readable output.
 
-`clogs` makes noisy logs easier to read by colorizing output and hiding
-repeated metadata until it changes. If you work with Lambda locally — via
-Serverless Framework, SAM, or the AWS CLI — you've seen the wall of JSON that
-Powertools and the Lambda runtime produce. `clogs` reformats that output so you
-can actually scan it.
+How it helps:
 
-`clogs` is a local CLI tool: it formats logs on your machine, does not send them anywhere, and uses only the Python standard library at runtime.
+- Detects stable fields (like `service`, `request_id`) and shows them once
+  in a context block at startup — not on every line
+- Hides repeated metadata until values actually change
+- Formats each log line as `timestamp LEVEL location │ message`
+- Colors levels, timestamps, and tags so you can scan quickly
+
+`clogs` is a local CLI tool. It reads stdin, formats output, and uses only
+the Python standard library.
 
 **Before** — raw Powertools JSON:
 
@@ -30,6 +34,16 @@ can actually scan it.
 
 ## Install
 
+Requires **Python 3.9+**. Install from source:
+
+```bash
+git clone https://github.com/JasonSatti/clogs.git
+cd clogs
+pip install .
+```
+
+Or with [uv](https://docs.astral.sh/uv/):
+
 ```bash
 git clone https://github.com/JasonSatti/clogs.git
 cd clogs
@@ -50,68 +64,54 @@ Or read from a file:
 
 ```bash
 clogs < output.log
-cat output.log | clogs
 ```
 
-Use `-v` / `--verbose` to show every field on every line with no suppression:
+Flags:
 
 ```bash
-sls invoke local -f my-function --data '{}' | clogs -v
-```
+# Show all fields on every line (no suppression)
+clogs -v
 
-Use `-c` / `--context` to control the startup context window:
+# Control how many records are buffered for context detection (default: 5)
+clogs -c 10
 
-```bash
-# Use more records to detect stable fields
-sls invoke local -f my-function --data '{}' | clogs -c 10
-
-# Disable the context block entirely (start streaming immediately)
-sls invoke local -f my-function --data '{}' | clogs --context 0
+# Disable the context block entirely
+clogs --context 0
 ```
 
 > **Note:** When piping, only stdout reaches `clogs`. If your tool writes logs
-> to stderr, add `2>&1` before the pipe to merge both streams:
-> `my-command 2>&1 | clogs`
+> to stderr, merge streams first: `my-command 2>&1 | clogs`
 
-## What it does
+## How it works
 
-**Colorized, aligned output** — each log line becomes
-`timestamp LEVEL location │ message`, with extra fields shown as
-`↳ key=value` tags underneath. Color makes levels, timestamps, and metadata
-easy to distinguish at a glance.
+**Context block** — the first few JSON records are buffered to find fields
+that stay constant (like `service` or `request_id`). Those are shown once
+in a header, then suppressed from individual lines.
 
-**Suppression of repeated metadata** — extra fields that repeat the same
-value are shown once, then hidden until they change. This is the main way
-`clogs` cuts noise. Use `-v` / `--verbose` to see everything.
+**Rolling suppression** — extra fields that repeat the same value are shown
+once, then hidden until they change. This is the main noise reduction.
+Use `-v` to disable suppression and see everything.
 
-**Context block** — at startup, the first few JSON records are inspected to
-find fields that stay constant across the window (like `service` or
-`request_id`). Those are shown once in a summary header. Use `-c N` /
-`--context N` to control the window size, or `--context 0` to skip the
-context block entirely. Suppression still works either way.
+**Startup noise** — non-JSON lines before the first log record (framework
+banners, config output) are grouped under a `─── startup ───` header.
 
-**Startup noise** — non-JSON lines that arrive before the first log record
-(framework banners, config output) are grouped under a `─── startup ───`
-header.
+**Return values** — Lambda return values (multi-line JSON at the end of
+output) are formatted as a `─── return ───` block with color-coded
+`statusCode` (green for 2xx, yellow for 4xx, red for 5xx).
 
-**Return values** — Lambda return values (multi-line JSON at the end of output)
-are formatted as a `─── return ───` summary block. The `statusCode` field is
-color-coded: green for 2xx, yellow for 4xx, red for 5xx.
-
-## Supported log formats
+## Supported formats
 
 | Format | Example |
 |---|---|
-| **Powertools JSON** | `{"level": "INFO", "location": "handler", "message": "hello", "timestamp": "..."}` |
-| **Lambda runtime** | `[INFO] 2026-03-14T13:35:29.236Z reqId [Thread - main] message` |
-| **Python stdlib** | `INFO:my_logger:message` |
+| Powertools JSON | `{"level": "INFO", "location": "handler", "message": "hello", ...}` |
+| Lambda runtime | `[INFO] 2026-03-14T13:35:29.236Z reqId [Thread - main] message` |
+| Python stdlib | `INFO:my_logger:message` |
 
-Other lines (warnings, trace span dumps, framework noise) are either
-suppressed or passed through dimmed.
+Other lines are passed through dimmed.
 
 ## Modes
 
-| Behavior | Default | `-v` / `--verbose` | `--context 0` |
+| Behavior | Default | `-v` | `--context 0` |
 |---|---|---|---|
 | Colorized output | Yes | Yes | Yes |
 | Repeated fields suppressed | Yes | No | Yes |
@@ -119,17 +119,14 @@ suppressed or passed through dimmed.
 
 ## Customization
 
-All config lives in [`clogs/config.py`](clogs/config.py) — edit it directly:
+Edit [`clogs/config.py`](clogs/config.py) directly:
 
-| Setting | What it controls | Default |
-|---|---|---|
-| `COLORS` | 256-color ANSI codes for every element | [defined in config](clogs/config.py) |
-| `LOCATION_WIDTH` | Column width for location field | 22 |
-| `CONTEXT_BUFFER_SIZE` | Records to buffer for context detection | 5 |
-| `PREFERRED_CONTEXT_FIELDS` | Fields included in context block if stable in any buffered record | [see set in config](clogs/config.py) |
-
-`COLORS` and `PREFERRED_CONTEXT_FIELDS` are plain dicts/sets you can edit to
-match your stack. No models, no env vars — just change the file.
+| Setting | What it controls |
+|---|---|
+| `COLORS` | 256-color ANSI codes for every element |
+| `LOCATION_WIDTH` | Column width for location field (default: 22) |
+| `CONTEXT_BUFFER_SIZE` | Records to buffer for context detection (default: 5) |
+| `PREFERRED_CONTEXT_FIELDS` | Fields eligible for context block with relaxed rules |
 
 ## Try it
 
@@ -143,7 +140,6 @@ cat examples/sample_lambda.log | clogs
 uv run pytest
 ```
 
-## Requirements
+## License
 
-- Python 3.9+
-- No external dependencies (stdlib only)
+[MIT](LICENSE)

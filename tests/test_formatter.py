@@ -88,8 +88,8 @@ class TestReturnValue:
 
     def test_status_code_string_no_color(self):
         result = format_return_value({"statusCode": "200"})
-        # String status codes use default block_value color, not status color
-        assert "\033[1;32m" not in result or "200" in result
+        # String status codes use default block_value color, not the green status color
+        assert "\033[1;32m 200" not in result
 
     def test_body_json_object_rendered_structured(self):
         payload = {"statusCode": 200, "body": '{"id":"usr_1","name":"Bruce"}'}

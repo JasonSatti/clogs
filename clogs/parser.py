@@ -85,6 +85,9 @@ def parse_line(line: str) -> ParsedLine:
         if stripped == "{":
             return ParsedLine(LineType.MULTILINE_JSON_START)
 
+    if stripped == "[":
+        return ParsedLine(LineType.MULTILINE_JSON_START)
+
     # Lambda runtime: [INFO] 2026-03-14T... requestId [Thread - name] message
     m = _LAMBDA_RE.match(stripped)
     if m:
