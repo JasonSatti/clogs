@@ -1,4 +1,4 @@
-"""Rendering, colors, wrapping, and block formatting — pure functions."""
+"""Rendering, colors, wrapping, and block formatting."""
 from __future__ import annotations
 
 import json
@@ -31,8 +31,8 @@ def format_level(level: str) -> str:
 
 
 def format_timestamp(ts: str) -> str:
-    """Extract HH:MM:SS from an ISO timestamp."""
-    if len(ts) >= 19 and ts[10] == "T":
+    """Extract HH:MM:SS from an ISO timestamp (handles both T and space separators)."""
+    if len(ts) >= 19 and ts[10] in ("T", " "):
         return colorize(ts[11:19], "timestamp")
     return colorize(ts[:8] if len(ts) >= 8 else ts, "timestamp")
 
