@@ -118,7 +118,7 @@ def parse_line(line: str) -> ParsedLine:
         )
 
     # Warning continuation lines (indented source context from warnings module)
-    if stripped.startswith("warnings.warn(") or stripped.startswith("* '"):
+    if stripped.startswith("warnings.warn(") or stripped.startswith("* '") or stripped.startswith("  "):
         return ParsedLine(LineType.NOISE)
 
     if stripped.startswith("Warning:"):
