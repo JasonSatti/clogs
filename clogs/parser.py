@@ -61,7 +61,7 @@ _LAMBDA_RE = re.compile(
 _STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):(\S+):(.*)")
 
 # Python warnings format: /path/to/file.py:42: DeprecationWarning: message
-_WARNING_RE = re.compile(r"^\S+:\d+: (\w+Warning): (.+)")
+_WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")
 
 
 def parse_line(line: str) -> ParsedLine:
