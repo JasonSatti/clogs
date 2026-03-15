@@ -34,20 +34,20 @@ the Python standard library.
 
 ## Install
 
-Requires **Python 3.9+**. Install from source:
-
-```bash
-git clone https://github.com/JasonSatti/clogs.git
-cd clogs
-pip install .
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
+Requires **Python 3.9+**. Install from source with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/JasonSatti/clogs.git
 cd clogs
 uv tool install .
+```
+
+Or with pip:
+
+```bash
+git clone https://github.com/JasonSatti/clogs.git
+cd clogs
+pip install .
 ```
 
 ## Usage
