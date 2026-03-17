@@ -5,8 +5,32 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "clogs"
 version = "0.1.0"
-description = "Colorized structured log formatter for Lambda JSON logs"
+description = "Colorized, condensed log formatting for AWS Lambda, Powertools, and Python logs"
 requires-python = ">=3.9"
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: System :: Logging",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+readme = "README.md"
+
+[project.urls]
+Homepage = "https://github.com/JasonSatti/clogs"
+Repository = "https://github.com/JasonSatti/clogs"
+Issues = "https://github.com/JasonSatti/clogs/issues"
 
 [project.scripts]
-clogs = "clogs:main"
+clogs = "clogs.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clogs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
