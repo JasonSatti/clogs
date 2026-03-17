@@ -1,4 +1,4 @@
-"""State management for context buffering, constant detection, and rolling baseline suppression."""
+"""Context tracking and buffering."""
 from __future__ import annotations
 
 import json
@@ -46,11 +46,7 @@ def detect_constant_fields(records: list[dict]) -> dict[str, str]:
 
 
 class ContextTracker:
-    """All mutable state for a single clogs invocation.
-
-    Encapsulates context detection, rolling baseline suppression,
-    record buffering, and multi-line JSON buffering.
-    """
+    """Mutable state for one clogs run."""
 
     def __init__(self, verbose: bool = False, context_size: int = CONTEXT_BUFFER_SIZE):
         self.verbose = verbose
@@ -77,7 +73,7 @@ class ContextTracker:
     def append_json_line(self, line: str) -> bool:
         """Append a line. Returns True when the buffer is complete or hits the safety limit."""
         self.json_buffer.append(line)
-        if line == "}" or len(self.json_buffer) > JSON_BUFFER_MAX_LINES:
+        if line in ("}", "]") or len(self.json_buffer) > JSON_BUFFER_MAX_LINES:
             return True
         try:
             json.loads("\n".join(self.json_buffer))
@@ -100,7 +96,7 @@ class ContextTracker:
         if not ctx:
             return None
 
-        self.context_values = dict(ctx)
+        self.context_values = ctx.copy()
 
         note = colorize(
             f"  ↑ {len(ctx)} field{'s' if len(ctx) != 1 else ''} shown once above; repeats hidden until changed",

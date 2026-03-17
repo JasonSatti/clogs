@@ -1,0 +1,48 @@
+Warning: Using serverless deploy -f option only updates the function code and will not update CloudFormation stack (env variables included).
+/usr/local/lib/python3.12/site-packages/pydantic/_internal/_config.py:373: UserWarning: Valid config keys have changed in V2:
+* 'allow_population_by_field_name' has been renamed to 'validate_by_name'
+  warnings.warn(message, UserWarning)
+
+Configured ddtrace instrumentation for 62 integration(s). The following modules have been patched: aioredis,aiomysql,aredis,asyncio,avro,boto,botocore,bottle,cassandra,celery,consul,django,dramatiq,elasticsearch,futures,gevent,graphql,grpc,httpx,kafka,mongoengine,mysql,mysqldb,pymysql,mariadb,pylibmc,pymemcache,pymongo,redis,rediscluster,requests,rq,sanic,sqlite3,aiohttp,aiopg,vertica,molten,jinja2,mako,flask,starlette,falcon,pyramid,pynamodb,pyodbc,fastapi,asyncpg,aws_lambda,subprocess,unittest,selenium
+INFO:ddtrace._monkey:Configured ddtrace instrumentation for 62 integration(s). The following modules have been patched: aioredis,aiomysql,aredis,asyncio,avro,boto,botocore,bottle,cassandra,celery,consul,django,dramatiq,elasticsearch,futures,gevent,graphql,grpc,httpx,kafka,mongoengine,mysql,mysqldb,pymysql,mariadb,pylibmc,pymemcache,pymongo,redis,rediscluster,requests,rq,sanic,sqlite3,aiohttp,aiopg,vertica,molten,jinja2,mako,flask,starlette,falcon,pyramid,pynamodb,pyodbc,fastapi,asyncpg,aws_lambda,subprocess,unittest,selenium
+
+{"traces": [[{"trace_id": "CEA93D358D1D4957", "parent_id": "0000000000000000", "span_id": "CB20ADCA35CB693D", "service": "aws.ssm", "resource": "ssm.getparameter", "name": "ssm.command", "error": 0}]]}
+
+{"level":"INFO","location":"handler:12","message":"Incoming request","timestamp":"2026-03-14T14:30:01.100Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9"}
+
+{"level":"INFO","location":"auth:25","message":"Token verified","timestamp":"2026-03-14T14:30:01.180Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821"}
+
+{"level":"INFO","location":"permissions:18","message":"Authorization check passed","timestamp":"2026-03-14T14:30:01.195Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","role":"admin"}
+
+{"level":"DEBUG","location":"cache:8","message":"Cache miss","timestamp":"2026-03-14T14:30:01.210Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","cache_key":"user:usr_4821"}
+
+{"level":"INFO","location":"db:44","message":"Querying DynamoDB","timestamp":"2026-03-14T14:30:01.220Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev"}
+
+{"traces": [[{"trace_id": "D21FFB7363998246", "parent_id": "0000000000000000", "span_id": "EB21339DB50EB69F", "service": "requests", "resource": "dynamodb.query", "name": "botocore.command", "error": 0}]]}
+
+{"level":"WARNING","location":"db:48","message":"Query slow, retrying","timestamp":"2026-03-14T14:30:04.230Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev","attempt":1,"latency_ms":3010}
+
+{"level":"INFO","location":"db:44","message":"Querying DynamoDB","timestamp":"2026-03-14T14:30:04.240Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev"}
+
+{"traces": [[{"trace_id": "D21FFB7363998247", "parent_id": "0000000000000000", "span_id": "EB21339DB50EB6A0", "service": "requests", "resource": "dynamodb.query", "name": "botocore.command", "error": 1}]]}
+
+{"level":"ERROR","location":"db:52","message":"Query failed, falling back to replica","timestamp":"2026-03-14T14:30:07.240Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev","attempt":2,"error":"TimeoutError"}
+
+{"traces": [[{"trace_id": "A58EA8009B8FAF3F", "parent_id": "0000000000000000", "span_id": "54C67107ECE40482", "service": "requests", "resource": "dynamodb.query", "name": "botocore.command", "error": 1}]]}
+
+{"level":"INFO","location":"db:44","message":"Querying DynamoDB","timestamp":"2026-03-14T14:30:07.250Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev-replica"}
+
+{"traces": [[{"trace_id": "B9EF205D651B9948", "parent_id": "0000000000000000", "span_id": "BF12620C0F7F08C6", "service": "requests", "resource": "dynamodb.query", "name": "botocore.command", "error": 0}]]}
+
+{"level":"INFO","location":"db:46","message":"Query succeeded","timestamp":"2026-03-14T14:30:07.480Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","table":"users-dev-replica","latency_ms":230}
+
+{"level":"INFO","location":"cache:15","message":"Caching result","timestamp":"2026-03-14T14:30:07.485Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","user_id":"usr_4821","cache_key":"user:usr_4821","ttl_seconds":300}
+
+{"level":"INFO","location":"handler:38","message":"Request completed","timestamp":"2026-03-14T14:30:07.490Z","service":"user-api","env":"dev","region":"us-east-1","function_name":"user-api-dev-getUser","cold_start":true,"request_id":"req-a1b2c3","correlation_id":"corr-x7y8z9","status_code":200,"latency_ms":6390}
+
+{"traces": [[{"trace_id": "504D55EA738867B8", "parent_id": "0000000000000000", "span_id": "EA89E8DF63F5453D", "service": "user-api", "resource": "GET /users/{id}", "name": "handler", "error": 0}]]}
+
+{
+  "statusCode": 200,
+  "body": "{\"id\":\"usr_4821\",\"name\":\"Bruce Wayne\",\"alias\":\"Batman\",\"email\":\"bruce@wayne.enterprises\"}"
+}

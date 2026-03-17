@@ -6,6 +6,7 @@ import json
 import sys
 from typing import TextIO
 
+from clogs import __version__
 from clogs.context import ContextTracker
 from clogs.formatter import (
     colorize,
@@ -50,7 +51,7 @@ def _flush_json_buffer(buf: list[str]) -> str | None:
 
 
 def _flush_record_buffer(ctx: ContextTracker) -> list[str]:
-    """Finalize the buffering phase and return all pending output lines."""
+    """Flush buffered records and pending pre-context lines."""
     if not ctx.buffering_records:
         return []
     ctx.buffering_records = False
@@ -91,19 +92,8 @@ def run(
     verbose: bool = False,
     context_size: int | None = None,
 ) -> None:
-    """Read log lines from *stdin*, format them, and write to *stdout*.
-
-    Parameters
-    ----------
-    stdin, stdout : TextIO
-        Input and output streams.
-    verbose : bool
-        Disable suppression and show every field on every line.
-    context_size : int or None
-        Number of records to buffer for context detection.
-        None uses the default from config. 0 disables the context block.
-    """
-    kwargs: dict = {"verbose": verbose}
+    """Format logs from stdin to stdout."""
+    kwargs: dict[str, bool | int] = {"verbose": verbose}
     if context_size is not None:
         kwargs["context_size"] = context_size
     ctx = ContextTracker(**kwargs)
@@ -156,9 +146,14 @@ def run(
 
 
 def main() -> None:
-    """CLI entrypoint — parse args and run the processing loop."""
+    """Run the CLI."""
     parser = argparse.ArgumentParser(
         description="Colorized, condensed log formatting for Lambda and Python logs",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "-v",

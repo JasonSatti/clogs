@@ -7,6 +7,8 @@ from clogs.formatter import (
     format_level,
     format_location,
     format_return_value,
+    format_runtime_line,
+    format_stdlib_line,
     format_timestamp,
 )
 
@@ -40,6 +42,11 @@ class TestFormatLevel:
         result = format_level("WARNING")
         assert "WARN" in result
         assert "WARNING" not in result
+
+    def test_lowercase_warning_uses_warning_color(self):
+        result = format_level("warning")
+        assert "WARN" in result
+        assert "\033[1;38;5;214m" in result
 
     def test_unknown_level_uses_info_color(self):
         # Should not crash
@@ -76,15 +83,15 @@ class TestReturnValue:
 
     def test_status_code_2xx_green(self):
         result = format_return_value({"statusCode": 200})
-        assert "\033[1;32m 200" in result  # info/green
+        assert "\033[1;38;5;78m 200" in result  # ok/sea green
 
     def test_status_code_4xx_yellow(self):
         result = format_return_value({"statusCode": 404})
-        assert "\033[1;33m 404" in result  # warning/yellow
+        assert "\033[1;38;5;214m 404" in result  # warning/amber
 
     def test_status_code_5xx_red(self):
         result = format_return_value({"statusCode": 504})
-        assert "\033[1;31m 504" in result  # error/red
+        assert "\033[1;38;5;9m 504" in result  # error/light red
 
     def test_status_code_string_no_color(self):
         result = format_return_value({"statusCode": "200"})
@@ -137,3 +144,41 @@ class TestReturnValue:
         result = format_return_value(payload)
         # headers should be rendered as-is, not parsed
         assert "headers:" in result
+
+
+class TestFormatRuntimeLine:
+    def test_contains_all_fields(self):
+        result = format_runtime_line("INFO", "2026-03-14T13:35:29.236Z", "main", "handler started")
+        assert "13:35:29" in result
+        assert "INFO" in result
+        assert "main" in result
+        assert "handler started" in result
+
+    def test_warning_abbreviated(self):
+        result = format_runtime_line("WARNING", "2026-03-14T00:00:00Z", "loc", "msg")
+        assert "WARN" in result
+        assert "WARNING" not in result
+
+    def test_separator_present(self):
+        result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "loc", "msg")
+        assert "│" in result
+
+
+class TestFormatStdlibLine:
+    def test_contains_fields(self):
+        result = format_stdlib_line("ERROR", "my_module", "something broke")
+        assert "ERROR" in result
+        assert "my_module" in result
+        assert "something broke" in result
+
+    def test_empty_timestamp_column(self):
+        """Stdlib lines have no timestamp — should start with padding."""
+        result = format_stdlib_line("INFO", "mod", "msg")
+        # Strip ANSI codes and check the line starts with spaces (no timestamp)
+        import re
+        clean = re.sub(r"\033\[[^m]*m", "", result)
+        assert clean.startswith("        ")
+
+    def test_separator_present(self):
+        result = format_stdlib_line("INFO", "loc", "msg")
+        assert "│" in result

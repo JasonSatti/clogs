@@ -5,21 +5,22 @@ from __future__ import annotations
 # Set any value to "" to disable coloring for that element.
 COLORS = {
     # Log levels
-    "info": "\033[1;32m",
-    "warning": "\033[1;33m",
-    "error": "\033[1;31m",
-    "debug": "\033[38;5;245m",
+    "info": "\033[1;38;5;117m",
+    "warning": "\033[1;38;5;214m",
+    "error": "\033[1;38;5;9m",
+    "debug": "\033[1;38;5;248m",
+    "ok": "\033[1;38;5;78m",
     # Log content
     "message": "\033[0;37m",
     "location": "\033[38;5;245m",
     "timestamp": "\033[38;5;240m",
-    "tag": "\033[38;5;139m",
+    "tag": "\033[38;5;97m",
     "non_json": "\033[38;5;250m",
     "stderr": "\033[38;5;240m",
     # Structural
     "separator": "\033[38;5;240m",
     # Blocks (context header, return value)
-    "block_header": "\033[38;5;173m",
+    "block_header": "\033[1;38;5;250m",
     "block_key": "\033[38;5;245m",
     "block_value": "\033[38;5;252m",
 }
@@ -29,7 +30,7 @@ RESET = "\033[0m"
 LEVEL_WIDTH = 5
 LOCATION_WIDTH = 22
 
-# Column where the message starts: timestamp(8) + sp + level(5) + sp + location(LOCATION_WIDTH) + sp + │ + sp
+# Column where the message starts.
 MSG_COL = 8 + 1 + LEVEL_WIDTH + 1 + LOCATION_WIDTH + 1 + 1 + 1
 
 # Fields rendered in the fixed-column layout (not shown as tags)

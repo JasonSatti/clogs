@@ -197,6 +197,13 @@ class TestJsonBuffer:
         buf = ctx.take_json_buffer()
         assert len(buf) == 3
 
+    def test_bare_bracket_closes_array(self):
+        """A bare ']' line should close an array buffer immediately."""
+        ctx = ContextTracker()
+        ctx.start_json_buffer("[")
+        assert not ctx.append_json_line('  "a",')
+        assert ctx.append_json_line("]")
+
 
 class TestRollingBaseline:
     """Test that format_json_line suppresses repeated values via context_values."""

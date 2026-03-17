@@ -28,6 +28,12 @@ class TestJsonLog:
         parsed = parse_line(line)
         assert parsed.line_type == LineType.NOISE
 
+    def test_json_with_message_and_traces_is_log(self):
+        line = json.dumps({"message": "done", "traces": [{"span_id": 123}]})
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "done"
+
     def test_invalid_json_starting_with_brace(self):
         parsed = parse_line("{not valid json at all")
         assert parsed.line_type == LineType.PASSTHROUGH
@@ -78,6 +84,16 @@ class TestNoiseSuppression:
 
     def test_warnings_warn_continuation(self):
         assert parse_line("warnings.warn('deprecated')").line_type == LineType.NOISE
+
+    def test_indented_lines_pass_through(self):
+        """Indented lines (e.g., stack traces) should not be swallowed as noise."""
+        assert parse_line("  File \"/app/handler.py\", line 42, in process").line_type == LineType.PASSTHROUGH
+        assert parse_line("    raise ValueError('bad input')").line_type == LineType.PASSTHROUGH
+
+    def test_bullet_lines_pass_through(self):
+        parsed = parse_line("  * 'foo' support is deprecated")
+        assert parsed.line_type == LineType.PASSTHROUGH
+        assert parsed.message == "* 'foo' support is deprecated"
 
     def test_blank_line(self):
         assert parse_line("").line_type == LineType.BLANK

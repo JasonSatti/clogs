@@ -3,34 +3,24 @@
 A terminal formatter for structured AWS Lambda logs. Pipe in noisy
 Powertools / Lambda JSON and get colorized, readable output.
 
-How it helps:
-
+- Suppresses noise - ddtrace spans, `null` returns, framework banners
 - Detects stable fields (like `service`, `request_id`) and shows them once
-  in a context block at startup — not on every line
+  in a context block - not on every line
 - Hides repeated metadata until values actually change
 - Formats each log line as `timestamp LEVEL location │ message`
 - Colors levels, timestamps, and tags so you can scan quickly
+- No dependencies, just the Python standard library
 
-`clogs` is a local CLI tool. It reads stdin, formats output, and uses only
-the Python standard library.
+`cat examples/example.log | clogs`
 
-**Before** — raw Powertools JSON:
+![after](examples/after.png)
 
-```
-{"level":"INFO","location":"handle_request","message":"Processing request","timestamp":"2026-03-14T08:42:15.123Z","service":"billing","request_id":"abc-123"}
-{"level":"INFO","location":"handle_request","message":"Request completed","timestamp":"2026-03-14T08:42:15.456Z","service":"billing","request_id":"abc-123"}
-```
+<details>
+<summary>Without clogs - <code>cat examples/example.log</code></summary>
 
-**After** — piped through `clogs`:
+![before](examples/before.png)
 
-```
-─── context ──────────────────────────────────────────────────────
-  service: billing
-  request_id: abc-123
-──────────────────────────────────────────────────────────────────
-08:42:15 INFO  handle_request        │ Processing request
-08:42:15 INFO  handle_request        │ Request completed
-```
+</details>
 
 ## Install
 
@@ -84,18 +74,18 @@ clogs --context 0
 
 ## How it works
 
-**Context block** — the first few JSON records are buffered to find fields
+**Context block** - the first few JSON records are buffered to find fields
 that stay constant (like `service` or `request_id`). Those are shown once
 in a header, then suppressed from individual lines.
 
-**Rolling suppression** — extra fields that repeat the same value are shown
+**Rolling suppression** - extra fields that repeat the same value are shown
 once, then hidden until they change. This is the main noise reduction.
 Use `-v` to disable suppression and see everything.
 
-**Startup noise** — non-JSON lines before the first log record (framework
+**Startup noise** - non-JSON lines before the first log record (framework
 banners, config output) are grouped under a `─── startup ───` header.
 
-**Return values** — Lambda return values (multi-line JSON at the end of
+**Return values** - Lambda return values (multi-line JSON at the end of
 output) are formatted as a `─── return ───` block with color-coded
 `statusCode` (green for 2xx, yellow for 4xx, red for 5xx).
 
@@ -127,12 +117,6 @@ Edit [`clogs/config.py`](clogs/config.py) directly:
 | `LOCATION_WIDTH` | Column width for location field (default: 22) |
 | `CONTEXT_BUFFER_SIZE` | Records to buffer for context detection (default: 5) |
 | `PREFERRED_CONTEXT_FIELDS` | Fields eligible for context block with relaxed rules |
-
-## Try it
-
-```bash
-cat examples/sample_lambda.log | clogs
-```
 
 ## Development
 

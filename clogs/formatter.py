@@ -1,4 +1,4 @@
-"""Rendering, colors, wrapping, and block formatting."""
+"""Formatting helpers for rendered output."""
 from __future__ import annotations
 
 import json
@@ -22,8 +22,8 @@ def _terminal_width() -> int:
 
 
 def format_level(level: str) -> str:
-    level_upper = level.upper()
-    color_key = level_upper.lower()
+    color_key = level.lower()
+    level_upper = color_key.upper()
     if color_key not in COLORS:
         color_key = "info"
     display = "WARN" if level_upper == "WARNING" else level_upper
@@ -99,8 +99,10 @@ def format_block(title: str, data: dict) -> str:
     trail = colorize("─" * (66 - len(title)), "separator")
     header = f"{bar} {colorize(title, 'block_header')} {trail}"
     lines = [header]
+    max_key = max(len(k) for k in data) if data else 0
     for k, v in data.items():
-        key = colorize(f"  {k}:", "block_key")
+        padded = f"  {k}:".ljust(max_key + 4)  # 2 indent + key + colon + padding
+        key = colorize(padded, "block_key")
         val = colorize(f" {v}", "block_value")
         lines.append(f"{key}{val}")
     lines.append(colorize("─" * 70, "separator"))
@@ -109,7 +111,7 @@ def format_block(title: str, data: dict) -> str:
 
 def _status_color(code: int) -> str:
     if 200 <= code < 300:
-        return "info"
+        return "ok"
     if 400 <= code < 500:
         return "warning"
     if code >= 500:
@@ -118,24 +120,28 @@ def _status_color(code: int) -> str:
 
 
 def _format_body_value(v: object) -> str:
-    """Format a single value from a parsed body, falling back to JSON for complex types."""
+    """Format one parsed body value."""
     if isinstance(v, (dict, list)):
         return json.dumps(v, separators=(", ", ": "))
     return str(v)
 
 
 def _render_body(body: object, key_prefix: str, lines: list[str]) -> None:
-    """Render a parsed body value as structured lines."""
+    """Render a parsed return body."""
     if isinstance(body, dict):
         lines.append(key_prefix)
+        max_key = max(len(str(bk)) for bk in body) if body else 0
         for bk, bv in body.items():
-            bkey = colorize(f"    {bk}:", "block_key")
+            padded = f"    {bk}:".ljust(max_key + 6)  # 4 indent + key + colon + padding
+            bkey = colorize(padded, "block_key")
             bval = colorize(f" {_format_body_value(bv)}", "block_value")
             lines.append(f"{bkey}{bval}")
     elif isinstance(body, list):
         lines.append(key_prefix)
+        max_idx = len(str(len(body) - 1)) if body else 1
         for i, item in enumerate(body):
-            idx = colorize(f"    [{i}]:", "block_key")
+            padded = f"    [{i}]:".ljust(max_idx + 7)  # 4 indent + [ + idx + ]: + padding
+            idx = colorize(padded, "block_key")
             val = colorize(f" {_format_body_value(item)}", "block_value")
             lines.append(f"{idx}{val}")
     else:
@@ -147,8 +153,10 @@ def format_return_value(obj: dict) -> str:
     trail = colorize("─" * (66 - len("return")), "separator")
     header = f"{bar} {colorize('return', 'block_header')} {trail}"
     lines = ["\n" + header]
+    max_key = max(len(k) for k in obj) if obj else 0
     for k, v in obj.items():
-        key = colorize(f"  {k}:", "block_key")
+        padded = f"  {k}:".ljust(max_key + 4)
+        key = colorize(padded, "block_key")
         if k == "statusCode" and isinstance(v, int):
             val = colorize(f" {v}", _status_color(v))
             lines.append(f"{key}{val}")
@@ -195,7 +203,7 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     lines.append(" ".join(parts))
 
     # Show each extra field once, then suppress until its value changes
-    tag_dict: dict = {}
+    tag_dict: dict[str, object] = {}
     for k, v in record.items():
         if k in KNOWN_FIELDS:
             continue

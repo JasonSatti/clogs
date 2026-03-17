@@ -1,4 +1,4 @@
-"""Line classification and parsing — pure functions, no state."""
+"""Line parsing helpers."""
 from __future__ import annotations
 
 import json
@@ -19,17 +19,7 @@ class LineType(Enum):
 
 
 class ParsedLine:
-    """Result of classifying and parsing a single log line.
-
-    Attributes
-    ----------
-    line_type : LineType
-        Classification of the line.
-    record : dict or None
-        Parsed JSON dict for JSON_LOG lines, None otherwise.
-    level, timestamp, location, message : str
-        Extracted fields, empty string when not applicable.
-    """
+    """Parsed representation of one input line."""
 
     __slots__ = ("line_type", "record", "level", "timestamp", "location", "message")
 
@@ -75,10 +65,10 @@ def parse_line(line: str) -> ParsedLine:
         try:
             record = json.loads(stripped)
             if isinstance(record, dict):
-                if "traces" in record:
-                    return ParsedLine(LineType.NOISE)
                 if "message" in record:
                     return ParsedLine(LineType.JSON_LOG, record=record)
+                if "traces" in record:
+                    return ParsedLine(LineType.NOISE)
         except json.JSONDecodeError:
             pass
 
@@ -118,7 +108,7 @@ def parse_line(line: str) -> ParsedLine:
         )
 
     # Warning continuation lines (indented source context from warnings module)
-    if stripped.startswith("warnings.warn(") or stripped.startswith("* '") or stripped.startswith("  "):
+    if stripped.startswith("warnings.warn("):
         return ParsedLine(LineType.NOISE)
 
     if stripped.startswith("Warning:"):

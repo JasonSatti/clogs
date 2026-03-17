@@ -129,7 +129,9 @@ class TestMultilineJsonReturn:
         for i in range(210):
             lines.append(f"  line {i}")
         output = _run_clogs("\n".join(lines))
-        assert "first" in output or "line" in output
+        assert "first" in output
+        assert "line 0" in output
+        assert "line 209" in output
 
 
 class TestContextFlag:
@@ -148,7 +150,8 @@ class TestContextFlag:
         for i in range(5):
             lines.append(_make_json_line(message=f"msg{i}", service="billing"))
         output = _run_clogs("\n".join(lines), context_size=0)
-        assert "context" not in output.lower().split("│")[0] or "context" not in output
+        assert "msg0" in output
+        assert "context" not in output
 
     def test_context_zero_suppression_still_works(self):
         """--context 0 should not disable suppression."""
@@ -233,5 +236,4 @@ class TestContextFlag:
         output = _run_clogs("\n".join(lines), context_size=3)
         assert "billing" in output
         assert "context" in output
-
 
