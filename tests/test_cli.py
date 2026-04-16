@@ -344,6 +344,35 @@ class TestContextFlag:
         context_section = output[context_start:context_end]
         assert "region:" in context_section
 
+    def test_interleaved_non_json_preserves_source_order(self):
+        """A traceback line between buffered JSON records must not print first."""
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            "Traceback (most recent call last):",
+            _make_json_line(message="msg1", service="billing"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        msg0_pos = output.index("msg0")
+        trace_pos = output.index("Traceback")
+        msg1_pos = output.index("msg1")
+        assert msg0_pos < trace_pos < msg1_pos
+
+    def test_interleaved_multiline_json_preserves_source_order(self):
+        """A mid-stream multiline blob between buffered records must emit between them."""
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            _make_json_line(message="msg1", service="billing"),
+            "{",
+            '  "foo": 1',
+            "}",
+            _make_json_line(message="msg2", service="billing"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        msg1_pos = output.index("msg1")
+        foo_pos = output.index('"foo": 1')
+        msg2_pos = output.index("msg2")
+        assert msg1_pos < foo_pos < msg2_pos
+
     def test_mixed_stream_with_late_json_still_builds_context(self):
         lines = [
             "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime one",

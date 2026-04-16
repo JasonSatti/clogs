@@ -54,7 +54,11 @@ class ContextTracker:
         self.startup_shown = False
         self.context_values: dict[str, str] = {}
 
-        self.record_buffer: list[dict] = []
+        # Interleaved record + formatted-line buffer. Dicts are JSON records
+        # (used for context detection); strings are already-formatted lines
+        # (non-JSON output that arrived between records). Preserves source
+        # order when the record buffer is flushed.
+        self.pending_output: list[dict | str] = []
         self.buffering_records = not verbose and context_size > 0
 
         self.json_buffer: list[str] = []
@@ -62,8 +66,15 @@ class ContextTracker:
 
     def add_record(self, record: dict) -> bool:
         """Buffer a record. Returns True when the buffer is full."""
-        self.record_buffer.append(record)
-        return len(self.record_buffer) >= self.context_size
+        self.pending_output.append(record)
+        return sum(1 for item in self.pending_output if isinstance(item, dict)) >= self.context_size
+
+    def add_formatted(self, line: str) -> None:
+        """Buffer a formatted non-JSON line so it emits in source order."""
+        self.pending_output.append(line)
+
+    def has_records(self) -> bool:
+        return any(isinstance(item, dict) for item in self.pending_output)
 
     def start_json_buffer(self, first_line: str) -> None:
         self.buffering_json = True
@@ -88,11 +99,12 @@ class ContextTracker:
 
     def take_context(self) -> dict[str, str] | None:
         """Return detected context fields and mark them as shown. Returns None if already taken or no fields."""
-        if self.context_shown or not self.record_buffer:
+        records = [item for item in self.pending_output if isinstance(item, dict)]
+        if self.context_shown or not records:
             return None
         self.context_shown = True
 
-        ctx = detect_constant_fields(self.record_buffer)
+        ctx = detect_constant_fields(records)
         if not ctx:
             return None
 

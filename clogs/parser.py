@@ -70,9 +70,12 @@ def parse_line(line: str) -> ParsedLine:
 
     if stripped.startswith("{"):
         if len(stripped) > MAX_JSON_PARSE_BYTES:
-            # Too large to parse safely. ddtrace batches dump multi-MB blobs —
-            # drop them. Anything else oversized, truncate and pass through.
-            if _DDTRACE_PREFIX_RE.match(stripped):
+            # Too large to parse safely. ddtrace span batches (pure noise)
+            # start with {"traces": and have no "message" field. Anything
+            # else — including oversized records that happen to lead with
+            # traces but also carry a real message — falls through to a
+            # truncated passthrough so it isn't silently dropped.
+            if _DDTRACE_PREFIX_RE.match(stripped) and '"message"' not in stripped:
                 return ParsedLine(LineType.NOISE)
             return ParsedLine(
                 LineType.PASSTHROUGH,

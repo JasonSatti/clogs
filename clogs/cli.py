@@ -68,14 +68,17 @@ def _flush_record_buffer(ctx: ContextTracker) -> list[str]:
     ctx.buffering_records = False
 
     out: list[str] = []
-    if not ctx.verbose and ctx.record_buffer:
+    if not ctx.verbose and ctx.has_records():
         fields = ctx.take_context()
         if fields:
             out.append(_render_context_block(fields))
 
-    for record in ctx.record_buffer:
-        out.append(format_json_line(record, ctx.context_values, ctx.verbose))
-    ctx.record_buffer.clear()
+    for item in ctx.pending_output:
+        if isinstance(item, dict):
+            out.append(format_json_line(item, ctx.context_values, ctx.verbose))
+        else:
+            out.append(item)
+    ctx.pending_output.clear()
 
     return out
 
@@ -114,7 +117,12 @@ def run(
                 result = _flush_json_buffer(pending_json_buf, is_final=False)
                 pending_json_buf = None
                 if result:
-                    _write(stdout, result)
+                    # During context buffering with records already queued,
+                    # queue the multiline result so it emits in source order.
+                    if ctx.buffering_records and ctx.has_records():
+                        ctx.add_formatted(result)
+                    else:
+                        _write(stdout, result)
 
             stripped = line.strip()
 
@@ -139,9 +147,14 @@ def run(
                 formatted = _format_parsed(parsed, ctx)
                 if not formatted:
                     continue
-                if parsed.line_type is LineType.PASSTHROUGH and not ctx.record_buffer:
-                    _write_startup_header(stdout, ctx)
-                _write(stdout, formatted)
+                if ctx.has_records():
+                    # Records already buffered — queue this line to preserve
+                    # source order when the buffer flushes.
+                    ctx.add_formatted(formatted)
+                else:
+                    if parsed.line_type is LineType.PASSTHROUGH:
+                        _write_startup_header(stdout, ctx)
+                    _write(stdout, formatted)
                 continue
 
             formatted = _format_parsed(parsed, ctx)

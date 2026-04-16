@@ -47,6 +47,18 @@ class TestJsonLog:
         parsed = parse_line(huge)
         assert parsed.line_type == LineType.NOISE
 
+    def test_oversized_record_with_traces_and_message_not_dropped(self):
+        # An oversized record that happens to lead with "traces" but also
+        # carries a real "message" must not be silently dropped — the
+        # normal-size path treats it as a JSON log, so the oversized path
+        # should at least pass it through rather than swallow it.
+        huge = (
+            '{"traces": [' + ",".join(f'"span{i}"' for i in range(100_000)) + "],"
+            ' "message": "done"}'
+        )
+        parsed = parse_line(huge)
+        assert parsed.line_type != LineType.NOISE
+
     def test_oversized_json_line_truncated_to_passthrough(self):
         # Pathological huge JSON lines fall through without hitting json.loads.
         huge = '{"key": "' + ("x" * 200_000) + '"}'
