@@ -69,13 +69,11 @@ def parse_line(line: str) -> ParsedLine:
         return ParsedLine(LineType.BLANK)
 
     if stripped.startswith("{"):
-        # Fast path before the expensive json.loads: ddtrace writer batches
-        # can flush as multi-MB single lines, and we want to drop them without
-        # paying to parse them.
-        if _DDTRACE_PREFIX_RE.match(stripped):
-            return ParsedLine(LineType.NOISE)
-
         if len(stripped) > MAX_JSON_PARSE_BYTES:
+            # Too large to parse safely. ddtrace batches dump multi-MB blobs —
+            # drop them. Anything else oversized, truncate and pass through.
+            if _DDTRACE_PREFIX_RE.match(stripped):
+                return ParsedLine(LineType.NOISE)
             return ParsedLine(
                 LineType.PASSTHROUGH,
                 message=stripped[:1024] + "… (truncated)",

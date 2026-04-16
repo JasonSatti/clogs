@@ -126,9 +126,6 @@ def run(
             parsed = parse_line(line)
 
             if parsed.line_type is LineType.MULTILINE_JSON_START:
-                if ctx.buffering_records and ctx.record_buffer:
-                    for out_line in _flush_record_buffer(ctx):
-                        _write(stdout, out_line)
                 ctx.start_json_buffer(stripped)
                 continue
 
@@ -142,12 +139,7 @@ def run(
                 formatted = _format_parsed(parsed, ctx)
                 if not formatted:
                     continue
-                if ctx.record_buffer:
-                    for out_line in _flush_record_buffer(ctx):
-                        _write(stdout, out_line)
-                    _write(stdout, formatted)
-                    continue
-                if parsed.line_type is LineType.PASSTHROUGH:
+                if parsed.line_type is LineType.PASSTHROUGH and not ctx.record_buffer:
                     _write_startup_header(stdout, ctx)
                 _write(stdout, formatted)
                 continue

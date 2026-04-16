@@ -199,20 +199,27 @@ class TestMultilineJsonReturn:
         assert "line 0" in output
         assert "line 209" in output
 
-    def test_multiline_json_during_buffering_preserves_order(self):
+    def test_multiline_json_during_buffering_preserves_context_window(self):
+        # `region` is a preferred field only present in msg2-4. Under the bug
+        # that flushed the record buffer on `{`, only msg0-1 would be in the
+        # window when context is built, so region would never enter the block.
         lines = [
             _make_json_line(message="msg0", service="svc"),
             _make_json_line(message="msg1", service="svc"),
             "{",
             '  "foo": 1',
             "}",
-            _make_json_line(message="msg2", service="svc"),
-            _make_json_line(message="msg3", service="svc"),
-            _make_json_line(message="msg4", service="svc"),
+            _make_json_line(message="msg2", service="svc", region="us-east-1"),
+            _make_json_line(message="msg3", service="svc", region="us-east-1"),
+            _make_json_line(message="msg4", service="svc", region="us-east-1"),
         ]
         output = _strip_ansi(_run_clogs("\n".join(lines)))
-        assert output.index("msg0") < output.index('"foo": 1')
-        assert output.index("msg1") < output.index('"foo": 1')
+        assert "─── context ───" in output
+        context_start = output.index("─── context ───")
+        context_end = output.index("─" * 60, context_start + 20)
+        context_section = output[context_start:context_end]
+        assert "region:" in context_section
+        assert '"foo": 1' in output
 
 
 class TestContextFlag:
@@ -317,6 +324,25 @@ class TestContextFlag:
         output = _run_clogs("\n".join(lines), context_size=3)
         assert "billing" in output
         assert "context" in output
+
+    def test_non_json_interleaved_does_not_shrink_context_window(self):
+        # Under the bug, a traceback after msg0 would flush the buffer early.
+        # Only msg0 would reach the context block — `region` (only in msg1-4)
+        # would never be detected as stable.
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            "Traceback (most recent call last):",
+            _make_json_line(message="msg1", service="billing", region="us-east-1"),
+            _make_json_line(message="msg2", service="billing", region="us-east-1"),
+            _make_json_line(message="msg3", service="billing", region="us-east-1"),
+            _make_json_line(message="msg4", service="billing", region="us-east-1"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── context ───" in output
+        context_start = output.index("─── context ───")
+        context_end = output.index("─" * 60, context_start + 20)
+        context_section = output[context_start:context_end]
+        assert "region:" in context_section
 
     def test_mixed_stream_with_late_json_still_builds_context(self):
         lines = [

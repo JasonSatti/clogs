@@ -40,10 +40,11 @@ class TestJsonLog:
         parsed = parse_line(line)
         assert parsed.line_type == LineType.NOISE
 
-    def test_ddtrace_prefix_with_truncated_json_suppressed(self):
-        # Even if the JSON body is malformed/truncated, anything starting
-        # with {"traces": is tracer output and should be dropped.
-        parsed = parse_line('{"traces": [[{"trace_id": "ABC"')
+    def test_ddtrace_oversized_batch_suppressed(self):
+        # The prefix heuristic only kicks in for lines too large to parse —
+        # that's when we can't let json.loads inspect the keys.
+        huge = '{"traces": [' + ",".join(f'"span{i}"' for i in range(100_000)) + "]}"
+        parsed = parse_line(huge)
         assert parsed.line_type == LineType.NOISE
 
     def test_oversized_json_line_truncated_to_passthrough(self):
@@ -56,6 +57,13 @@ class TestJsonLog:
 
     def test_json_with_message_and_traces_is_log(self):
         line = json.dumps({"message": "done", "traces": [{"span_id": 123}]})
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "done"
+
+    def test_traces_first_with_message_is_log(self):
+        # Key order is emitter-dependent — message must still win when present.
+        line = json.dumps({"traces": [{"span_id": 123}], "message": "done"})
         parsed = parse_line(line)
         assert parsed.line_type == LineType.JSON_LOG
         assert parsed.record["message"] == "done"
