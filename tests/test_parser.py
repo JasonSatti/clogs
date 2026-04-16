@@ -59,6 +59,20 @@ class TestJsonLog:
         parsed = parse_line(huge)
         assert parsed.line_type != LineType.NOISE
 
+    def test_oversized_json_log_with_message_still_parsed(self):
+        # A >64KB JSON log record with a real "message" must still classify
+        # as JSON_LOG. The size guard only short-circuits for ddtrace-shaped
+        # blobs; valid oversized records should round-trip through json.loads.
+        big_payload = "x" * 100_000
+        line = json.dumps({
+            "level": "INFO",
+            "message": "dumping payload",
+            "payload": big_payload,
+        })
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "dumping payload"
+
     def test_oversized_json_line_truncated_to_passthrough(self):
         # Pathological huge JSON lines fall through without hitting json.loads.
         huge = '{"key": "' + ("x" * 200_000) + '"}'

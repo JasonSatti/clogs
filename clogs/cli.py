@@ -116,9 +116,24 @@ def run(
         kwargs["context_size"] = context_size
     ctx = ContextTracker(**kwargs)
 
+    def _flush_pre_record_multiline_as_generic() -> None:
+        if ctx.pre_record_multiline is None:
+            return
+        result = _flush_json_buffer(ctx.pre_record_multiline, is_final=False)
+        ctx.pre_record_multiline = None
+        if result:
+            _write(stdout, result)
+            if ctx.buffering_records:
+                ctx.pre_record_streamed = True
+
     try:
         for line in stdin:
             stripped = line.strip()
+
+            # Any new line proves the previous pre-record multiline wasn't
+            # terminal — flush it as generic before processing the new line.
+            if ctx.pre_record_multiline is not None and not ctx.buffering_json:
+                _flush_pre_record_multiline_as_generic()
 
             if ctx.buffering_json:
                 if ctx.append_json_line(stripped):
@@ -127,14 +142,16 @@ def run(
                         # Inside the context window, after the first record.
                         # Queue in source order so flush can decide rendering.
                         ctx.add_multiline(buf)
+                    elif ctx.buffering_records:
+                        # Pre-record phase — hold for one slot so a terminal
+                        # invoke-return dict can still render as return block.
+                        ctx.pre_record_multiline = buf
                     else:
-                        # No records yet (or buffering disabled) — render
-                        # immediately so live streams don't stall.
+                        # Buffering disabled (verbose or --context 0) — render
+                        # immediately.
                         result = _flush_json_buffer(buf, is_final=False)
                         if result:
                             _write(stdout, result)
-                            if ctx.buffering_records:
-                                ctx.pre_record_streamed = True
                 continue
 
             parsed = parse_line(line)
@@ -173,6 +190,11 @@ def run(
 
         # EOF handling. Any still-pending multiline at the very end is the
         # one case where we can prove it's terminal — render as return block.
+        if ctx.pre_record_multiline is not None:
+            result = _flush_json_buffer(ctx.pre_record_multiline, is_final=True)
+            ctx.pre_record_multiline = None
+            if result:
+                _write(stdout, result)
         if ctx.buffering_records:
             for out_line in _flush_record_buffer(ctx, eof=True):
                 _write(stdout, out_line)

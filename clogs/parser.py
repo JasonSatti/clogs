@@ -69,18 +69,17 @@ def parse_line(line: str) -> ParsedLine:
         return ParsedLine(LineType.BLANK)
 
     if stripped.startswith("{"):
-        if len(stripped) > MAX_JSON_PARSE_BYTES:
-            # Too large to parse safely. ddtrace span batches (pure noise)
-            # start with {"traces": and have no "message" field. Anything
-            # else — including oversized records that happen to lead with
-            # traces but also carry a real message — falls through to a
-            # truncated passthrough so it isn't silently dropped.
-            if _DDTRACE_PREFIX_RE.match(stripped) and '"message"' not in stripped:
-                return ParsedLine(LineType.NOISE)
-            return ParsedLine(
-                LineType.PASSTHROUGH,
-                message=stripped[:1024] + "… (truncated)",
-            )
+        oversized = len(stripped) > MAX_JSON_PARSE_BYTES
+
+        # Fast-path for pathological ddtrace span batches: a multi-MB blob
+        # whose prefix matches and which carries no "message" field is pure
+        # noise — skip the cost of json.loads entirely.
+        if (
+            oversized
+            and _DDTRACE_PREFIX_RE.match(stripped)
+            and '"message"' not in stripped
+        ):
+            return ParsedLine(LineType.NOISE)
 
         try:
             record = json.loads(stripped)
@@ -91,6 +90,14 @@ def parse_line(line: str) -> ParsedLine:
                     return ParsedLine(LineType.NOISE)
         except json.JSONDecodeError:
             pass
+
+        # Oversized JSON that isn't a recognized log shape — truncate instead
+        # of letting a multi-MB blob fall through as a giant passthrough.
+        if oversized:
+            return ParsedLine(
+                LineType.PASSTHROUGH,
+                message=stripped[:1024] + "… (truncated)",
+            )
 
         if stripped == "{":
             return ParsedLine(LineType.MULTILINE_JSON_START)

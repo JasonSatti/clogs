@@ -182,6 +182,18 @@ class TestMultilineJsonReturn:
         output = _strip_ansi(_run_clogs("\n".join(lines)))
         assert "─── return " in output
 
+    def test_pure_multiline_dict_at_eof_renders_as_return_block(self):
+        """A lone multiline dict (e.g. local Lambda invoke return) keeps return formatting."""
+        lines = [
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+        assert "statusCode" in output
+
     def test_pure_multiline_stream_does_not_stall(self):
         """Pure multiline JSON with no records must not wait for records/EOF-cap."""
         # Two back-to-back multiline dicts and nothing else. Under the old

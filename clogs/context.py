@@ -56,6 +56,12 @@ class ContextTracker:
         # JSON record; drives lazy startup-header emission at the point the
         # first record arrives.
         self.pre_record_streamed = False
+        # Holds the most recent completed multi-line JSON blob seen before
+        # any JSON record arrived. Flushed as generic when the next line
+        # (of any kind) arrives, or as a return block at EOF — that's the
+        # one case where we can prove the blob was the terminal payload
+        # (e.g. a local Lambda invoke returning just a response body).
+        self.pre_record_multiline: list[str] | None = None
 
         # Interleaved buffer used during the context-detection window. Each
         # item is one of:
