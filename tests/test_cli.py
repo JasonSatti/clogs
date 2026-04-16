@@ -182,6 +182,23 @@ class TestMultilineJsonReturn:
         output = _strip_ansi(_run_clogs("\n".join(lines)))
         assert "─── return " in output
 
+    def test_pure_multiline_stream_does_not_stall(self):
+        """Pure multiline JSON with no records must not wait for records/EOF-cap."""
+        # Two back-to-back multiline dicts and nothing else. Under the old
+        # bug these would sit in pending_output until 10 blobs accumulated.
+        lines = [
+            "{",
+            '  "a": 1',
+            "}",
+            "{",
+            '  "b": 2',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert '"a": 1' in output
+        # Second blob is still pending at EOF → renders as return-block.
+        assert '"b": 2' in output or "b:" in output
+
     def test_multiline_after_buffering_flush_renders_immediately_as_generic(self):
         """Post-buffer multiline must render as generic (not wait for next line)."""
         lines = []
@@ -390,6 +407,15 @@ class TestContextFlag:
         foo_pos = output.index('"foo": 1')
         msg2_pos = output.index("msg2")
         assert msg1_pos < foo_pos < msg2_pos
+
+    def test_long_startup_preamble_does_not_disable_context(self):
+        """15 passthrough lines before records must not prevent context detection."""
+        lines = [f"startup log line {i}" for i in range(15)]
+        for i in range(3):
+            lines.append(_make_json_line(message=f"msg{i}", service="billing"))
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=3))
+        assert "─── context ───" in output
+        assert "billing" in output
 
     def test_mixed_stream_with_late_json_still_builds_context(self):
         lines = [

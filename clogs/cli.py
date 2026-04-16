@@ -75,28 +75,14 @@ def _flush_record_buffer(ctx: ContextTracker, *, eof: bool = False) -> list[str]
     ctx.buffering_records = False
 
     pending = ctx.pending_output
-    first_record_idx = next(
-        (i for i, x in enumerate(pending) if isinstance(x, dict)),
-        None,
-    )
-    has_leading_non_records = first_record_idx is not None and first_record_idx > 0
-
     out: list[str] = []
-    if has_leading_non_records:
-        out.append(_render_startup_header())
 
-    context_emitted = False
+    if ctx.has_records() and not ctx.verbose:
+        fields = ctx.take_context()
+        if fields:
+            out.append(_render_context_block(fields))
+
     for i, item in enumerate(pending):
-        if (
-            i == first_record_idx
-            and not context_emitted
-            and not ctx.verbose
-        ):
-            fields = ctx.take_context()
-            if fields:
-                out.append(_render_context_block(fields))
-            context_emitted = True
-
         if isinstance(item, dict):
             out.append(format_json_line(item, ctx.context_values, ctx.verbose))
         elif isinstance(item, list):
@@ -137,16 +123,18 @@ def run(
             if ctx.buffering_json:
                 if ctx.append_json_line(stripped):
                     buf = ctx.take_json_buffer()
-                    if ctx.buffering_records:
-                        if ctx.add_multiline(buf):
-                            for out_line in _flush_record_buffer(ctx):
-                                _write(stdout, out_line)
+                    if ctx.buffering_records and ctx.has_records():
+                        # Inside the context window, after the first record.
+                        # Queue in source order so flush can decide rendering.
+                        ctx.add_multiline(buf)
                     else:
-                        # Past the context window — render immediately as
-                        # generic JSON so live streams don't stall.
+                        # No records yet (or buffering disabled) — render
+                        # immediately so live streams don't stall.
                         result = _flush_json_buffer(buf, is_final=False)
                         if result:
                             _write(stdout, result)
+                            if ctx.buffering_records:
+                                ctx.pre_record_streamed = True
                 continue
 
             parsed = parse_line(line)
@@ -158,6 +146,11 @@ def run(
             # Buffering phase: collect JSON records for context detection
             if ctx.buffering_records:
                 if parsed.line_type is LineType.JSON_LOG:
+                    # First record closes the pre-record streaming phase —
+                    # emit the startup header retroactively if any chatter
+                    # was streamed above.
+                    if not ctx.has_records() and ctx.pre_record_streamed:
+                        _write(stdout, _render_startup_header())
                     if ctx.add_record(parsed.record):
                         for out_line in _flush_record_buffer(ctx):
                             _write(stdout, out_line)
@@ -165,9 +158,13 @@ def run(
                 formatted = _format_parsed(parsed, ctx)
                 if not formatted:
                     continue
-                if ctx.add_formatted(formatted):
-                    for out_line in _flush_record_buffer(ctx):
-                        _write(stdout, out_line)
+                if ctx.has_records():
+                    # Interleaved with buffered records — keep source order.
+                    ctx.add_formatted(formatted)
+                else:
+                    # Pre-record chatter: stream immediately.
+                    _write(stdout, formatted)
+                    ctx.pre_record_streamed = True
                 continue
 
             formatted = _format_parsed(parsed, ctx)

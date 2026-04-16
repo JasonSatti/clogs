@@ -52,6 +52,10 @@ class ContextTracker:
         self.context_size = context_size
         self.context_shown = False
         self.context_values: dict[str, str] = {}
+        # True once any non-record line has been streamed before the first
+        # JSON record; drives lazy startup-header emission at the point the
+        # first record arrives.
+        self.pre_record_streamed = False
 
         # Interleaved buffer used during the context-detection window. Each
         # item is one of:
@@ -67,35 +71,17 @@ class ContextTracker:
         self.buffering_json = False
 
     def add_record(self, record: dict) -> bool:
-        """Buffer a record. Returns True when the buffer should flush."""
+        """Buffer a record. Returns True once context_size records are in."""
         self.pending_output.append(record)
-        return self._buffer_full()
+        return sum(1 for item in self.pending_output if isinstance(item, dict)) >= self.context_size
 
-    def add_formatted(self, line: str) -> bool:
-        """Buffer a formatted non-JSON line so it emits in source order.
-
-        Returns True when the buffer should flush — this is how
-        passthrough-only or non-JSON streams bail out of the initial
-        context-detection window without waiting for a record that will
-        never arrive.
-        """
+    def add_formatted(self, line: str) -> None:
+        """Buffer a formatted non-JSON line so it emits in source order."""
         self.pending_output.append(line)
-        return self._buffer_full()
 
-    def add_multiline(self, buf: list[str]) -> bool:
+    def add_multiline(self, buf: list[str]) -> None:
         """Buffer a completed multi-line JSON blob for ordered flushing."""
         self.pending_output.append(buf)
-        return self._buffer_full()
-
-    def _buffer_full(self) -> bool:
-        records = sum(1 for item in self.pending_output if isinstance(item, dict))
-        if records >= self.context_size:
-            return True
-        # Cap total buffered lines so non-record streams don't stall waiting
-        # for a record that never comes. 2x the context size keeps the initial
-        # delay short (default: 10 lines) while still allowing meaningful
-        # context detection in mixed streams.
-        return len(self.pending_output) >= self.context_size * 2
 
     def has_records(self) -> bool:
         return any(isinstance(item, dict) for item in self.pending_output)
