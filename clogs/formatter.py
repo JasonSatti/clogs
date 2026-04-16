@@ -238,8 +238,9 @@ def format_warning(msg: str) -> str:
 
 
 def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
-    # MainThread is the default on every Lambda line — hide it, keep other thread names.
-    display_loc = "" if location == "MainThread" else location
+    # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
+    # `MainThread`. Both are noise — hide them, keep other thread names.
+    display_loc = "" if location in ("main", "MainThread") else location
     parts = [
         format_timestamp(timestamp),
         format_level(level),

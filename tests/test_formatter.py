@@ -171,11 +171,18 @@ class TestReturnValue:
 
 class TestFormatRuntimeLine:
     def test_contains_all_fields(self):
-        result = format_runtime_line("INFO", "2026-03-14T13:35:29.236Z", "main", "handler started")
+        result = format_runtime_line("INFO", "2026-03-14T13:35:29.236Z", "worker-1", "handler started")
         assert "13:35:29" in result
         assert "INFO" in result
-        assert "main" in result
+        assert "worker-1" in result
         assert "handler started" in result
+
+    def test_default_main_location_hidden(self):
+        result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "main", "msg")
+        # `main` is the default thread name on every Lambda runtime line —
+        # suppress it as noise alongside MainThread.
+        assert "main" not in result.replace("msg", "")  # avoid false match in unrelated text
+        assert "msg" in result
 
     def test_warning_abbreviated(self):
         result = format_runtime_line("WARNING", "2026-03-14T00:00:00Z", "loc", "msg")

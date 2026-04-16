@@ -62,40 +62,60 @@ def _render_context_block(fields: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _flush_record_buffer(ctx: ContextTracker) -> list[str]:
+def _render_startup_header() -> str:
+    bar = colorize("─── ", "separator")
+    title = colorize("startup", "block_header")
+    trail = colorize(" ───", "separator")
+    return f"{bar}{title}{trail}"
+
+
+def _flush_record_buffer(ctx: ContextTracker, *, eof: bool = False) -> list[str]:
     if not ctx.buffering_records:
         return []
     ctx.buffering_records = False
 
-    out: list[str] = []
-    if not ctx.verbose and ctx.has_records():
-        fields = ctx.take_context()
-        if fields:
-            out.append(_render_context_block(fields))
+    pending = ctx.pending_output
+    first_record_idx = next(
+        (i for i, x in enumerate(pending) if isinstance(x, dict)),
+        None,
+    )
+    has_leading_non_records = first_record_idx is not None and first_record_idx > 0
 
-    for item in ctx.pending_output:
+    out: list[str] = []
+    if has_leading_non_records:
+        out.append(_render_startup_header())
+
+    context_emitted = False
+    for i, item in enumerate(pending):
+        if (
+            i == first_record_idx
+            and not context_emitted
+            and not ctx.verbose
+        ):
+            fields = ctx.take_context()
+            if fields:
+                out.append(_render_context_block(fields))
+            context_emitted = True
+
         if isinstance(item, dict):
             out.append(format_json_line(item, ctx.context_values, ctx.verbose))
+        elif isinstance(item, list):
+            # Terminal dict at EOF gets the return-block treatment; every
+            # other multiline (mid-stream or non-dict) renders as generic.
+            is_last = i == len(pending) - 1
+            result = _flush_json_buffer(item, is_final=eof and is_last)
+            if result:
+                out.append(result)
         else:
             out.append(item)
-    ctx.pending_output.clear()
 
+    ctx.pending_output.clear()
     return out
 
 
 def _write(stdout: TextIO, text: str) -> None:
     stdout.write(text + "\n")
     stdout.flush()
-
-
-def _write_startup_header(stdout: TextIO, ctx: ContextTracker) -> None:
-    if ctx.startup_shown:
-        return
-    bar = colorize("─── ", "separator")
-    title = colorize("startup", "block_header")
-    trail = colorize(" ───", "separator")
-    _write(stdout, f"{bar}{title}{trail}")
-    ctx.startup_shown = True
 
 
 def run(
@@ -109,26 +129,24 @@ def run(
     if context_size is not None:
         kwargs["context_size"] = context_size
     ctx = ContextTracker(**kwargs)
-    pending_json_buf: list[str] | None = None
 
     try:
         for line in stdin:
-            if pending_json_buf is not None:
-                result = _flush_json_buffer(pending_json_buf, is_final=False)
-                pending_json_buf = None
-                if result:
-                    # During context buffering with records already queued,
-                    # queue the multiline result so it emits in source order.
-                    if ctx.buffering_records and ctx.has_records():
-                        ctx.add_formatted(result)
-                    else:
-                        _write(stdout, result)
-
             stripped = line.strip()
 
             if ctx.buffering_json:
                 if ctx.append_json_line(stripped):
-                    pending_json_buf = ctx.take_json_buffer()
+                    buf = ctx.take_json_buffer()
+                    if ctx.buffering_records:
+                        if ctx.add_multiline(buf):
+                            for out_line in _flush_record_buffer(ctx):
+                                _write(stdout, out_line)
+                    else:
+                        # Past the context window — render immediately as
+                        # generic JSON so live streams don't stall.
+                        result = _flush_json_buffer(buf, is_final=False)
+                        if result:
+                            _write(stdout, result)
                 continue
 
             parsed = parse_line(line)
@@ -147,27 +165,20 @@ def run(
                 formatted = _format_parsed(parsed, ctx)
                 if not formatted:
                     continue
-                if ctx.has_records():
-                    # Records already buffered — queue this line to preserve
-                    # source order when the buffer flushes.
-                    ctx.add_formatted(formatted)
-                else:
-                    if parsed.line_type is LineType.PASSTHROUGH:
-                        _write_startup_header(stdout, ctx)
-                    _write(stdout, formatted)
+                if ctx.add_formatted(formatted):
+                    for out_line in _flush_record_buffer(ctx):
+                        _write(stdout, out_line)
                 continue
 
             formatted = _format_parsed(parsed, ctx)
             if formatted:
                 _write(stdout, formatted)
 
+        # EOF handling. Any still-pending multiline at the very end is the
+        # one case where we can prove it's terminal — render as return block.
         if ctx.buffering_records:
-            for out_line in _flush_record_buffer(ctx):
+            for out_line in _flush_record_buffer(ctx, eof=True):
                 _write(stdout, out_line)
-        if pending_json_buf is not None:
-            result = _flush_json_buffer(pending_json_buf, is_final=True)
-            if result:
-                _write(stdout, result)
         if ctx.json_buffer:
             result = _flush_json_buffer(ctx.take_json_buffer(), is_final=True)
             if result:

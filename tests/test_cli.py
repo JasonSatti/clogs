@@ -113,6 +113,12 @@ class TestPassthrough:
         assert "second passthrough line" in output
         assert "third passthrough line" in output
 
+    def test_passthrough_only_stream_has_no_startup_header(self):
+        """Startup header should not appear when no structured record follows."""
+        output = _strip_ansi(_run_clogs("my-command output\nanother line"))
+        assert "startup" not in output
+        assert "my-command output" in output
+
 
 class TestStartupGrouping:
     def test_startup_lines_grouped(self):
@@ -175,6 +181,18 @@ class TestMultilineJsonReturn:
         ]
         output = _strip_ansi(_run_clogs("\n".join(lines)))
         assert "─── return " in output
+
+    def test_multiline_after_buffering_flush_renders_immediately_as_generic(self):
+        """Post-buffer multiline must render as generic (not wait for next line)."""
+        lines = []
+        # Exceed context_size=5 to close the buffering window.
+        for i in range(5):
+            lines.append(_make_json_line(message=f"msg{i}"))
+        lines.extend(["{", '  "statusCode": 200,', '  "body": "ok"', "}"])
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "statusCode" in output
+        # Terminal multiline past the buffer window is generic, not return-block.
+        assert "─── return " not in output
 
     def test_multiline_array_formatted(self):
         """A top-level JSON array return should be captured and formatted."""

@@ -51,27 +51,51 @@ class ContextTracker:
         self.verbose = verbose
         self.context_size = context_size
         self.context_shown = False
-        self.startup_shown = False
         self.context_values: dict[str, str] = {}
 
-        # Interleaved record + formatted-line buffer. Dicts are JSON records
-        # (used for context detection); strings are already-formatted lines
-        # (non-JSON output that arrived between records). Preserves source
-        # order when the record buffer is flushed.
-        self.pending_output: list[dict | str] = []
+        # Interleaved buffer used during the context-detection window. Each
+        # item is one of:
+        #   - dict: a JSON log record (drives context detection)
+        #   - str:  a pre-rendered non-JSON line (passthrough/runtime/etc.)
+        #   - list[str]: a completed multi-line JSON blob, deferred so the
+        #     flush path can decide generic-vs-return rendering based on
+        #     whether EOF actually arrived while it was still pending.
+        self.pending_output: list[dict | str | list[str]] = []
         self.buffering_records = not verbose and context_size > 0
 
         self.json_buffer: list[str] = []
         self.buffering_json = False
 
     def add_record(self, record: dict) -> bool:
-        """Buffer a record. Returns True when the buffer is full."""
+        """Buffer a record. Returns True when the buffer should flush."""
         self.pending_output.append(record)
-        return sum(1 for item in self.pending_output if isinstance(item, dict)) >= self.context_size
+        return self._buffer_full()
 
-    def add_formatted(self, line: str) -> None:
-        """Buffer a formatted non-JSON line so it emits in source order."""
+    def add_formatted(self, line: str) -> bool:
+        """Buffer a formatted non-JSON line so it emits in source order.
+
+        Returns True when the buffer should flush — this is how
+        passthrough-only or non-JSON streams bail out of the initial
+        context-detection window without waiting for a record that will
+        never arrive.
+        """
         self.pending_output.append(line)
+        return self._buffer_full()
+
+    def add_multiline(self, buf: list[str]) -> bool:
+        """Buffer a completed multi-line JSON blob for ordered flushing."""
+        self.pending_output.append(buf)
+        return self._buffer_full()
+
+    def _buffer_full(self) -> bool:
+        records = sum(1 for item in self.pending_output if isinstance(item, dict))
+        if records >= self.context_size:
+            return True
+        # Cap total buffered lines so non-record streams don't stall waiting
+        # for a record that never comes. 2x the context size keeps the initial
+        # delay short (default: 10 lines) while still allowing meaningful
+        # context detection in mixed streams.
+        return len(self.pending_output) >= self.context_size * 2
 
     def has_records(self) -> bool:
         return any(isinstance(item, dict) for item in self.pending_output)
