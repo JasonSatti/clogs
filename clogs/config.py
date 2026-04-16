@@ -14,9 +14,9 @@ COLORS = {
     "message": "\033[0;37m",
     "location": "\033[38;5;245m",
     "timestamp": "\033[38;5;240m",
-    "tag": "\033[38;5;97m",
+    "tag": "\033[38;5;134m",
     "non_json": "\033[38;5;250m",
-    "stderr": "\033[38;5;240m",
+    "passthrough": "\033[38;5;240m",
     # Structural
     "separator": "\033[38;5;240m",
     # Blocks (context header, return value)
@@ -27,11 +27,12 @@ COLORS = {
 
 RESET = "\033[0m"
 
+TIMESTAMP_WIDTH = 8
 LEVEL_WIDTH = 5
 LOCATION_WIDTH = 22
 
 # Column where the message starts.
-MSG_COL = 8 + 1 + LEVEL_WIDTH + 1 + LOCATION_WIDTH + 1 + 1 + 1
+MSG_COL = TIMESTAMP_WIDTH + 1 + LEVEL_WIDTH + 1 + LOCATION_WIDTH + 1 + 1 + 1
 
 # Fields rendered in the fixed-column layout (not shown as tags)
 KNOWN_FIELDS = {"level", "location", "message", "timestamp"}
@@ -62,3 +63,7 @@ CONTEXT_BUFFER_SIZE = 5
 
 # Prevents a stray '{' from swallowing all subsequent output.
 JSON_BUFFER_MAX_LINES = 200
+
+# Skip json.loads on lines above this size — catches pathological emitters
+# that dump multi-MB blobs as a single line.
+MAX_JSON_PARSE_BYTES = 65_536

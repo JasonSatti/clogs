@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 import os
 
-from clogs.config import COLORS, KNOWN_FIELDS, LEVEL_WIDTH, LOCATION_WIDTH, MSG_COL, RESET
+from clogs.config import COLORS, KNOWN_FIELDS, LEVEL_WIDTH, LOCATION_WIDTH, MSG_COL, RESET, TIMESTAMP_WIDTH
 
 
 def colorize(text: str, color_key: str) -> str:
+    if "NO_COLOR" in os.environ:
+        return text
     code = COLORS.get(color_key, "")
     if not code:
         return text
@@ -228,7 +230,7 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
 
 
 def format_passthrough(text: str) -> str:
-    return colorize(text, "stderr")
+    return colorize(text, "passthrough")
 
 
 def format_warning(msg: str) -> str:
@@ -236,10 +238,12 @@ def format_warning(msg: str) -> str:
 
 
 def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
+    # MainThread is the default on every Lambda line — hide it, keep other thread names.
+    display_loc = "" if location == "MainThread" else location
     parts = [
         format_timestamp(timestamp),
         format_level(level),
-        format_location(location),
+        format_location(display_loc),
         colorize("│", "separator"),
         _wrap_message(message),
     ]
@@ -248,7 +252,7 @@ def format_runtime_line(level: str, timestamp: str, location: str, message: str)
 
 def format_stdlib_line(level: str, location: str, message: str) -> str:
     parts = [
-        "        ",  # empty timestamp column
+        " " * TIMESTAMP_WIDTH,
         format_level(level),
         format_location(location),
         colorize("│", "separator"),

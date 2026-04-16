@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 
 from clogs.config import CONTEXT_BUFFER_SIZE, JSON_BUFFER_MAX_LINES, KNOWN_FIELDS, PREFERRED_CONTEXT_FIELDS
-from clogs.formatter import colorize, format_block
 
 
 def detect_constant_fields(records: list[dict]) -> dict[str, str]:
@@ -52,11 +51,11 @@ class ContextTracker:
         self.verbose = verbose
         self.context_size = context_size
         self.context_shown = False
+        self.startup_shown = False
         self.context_values: dict[str, str] = {}
 
         self.record_buffer: list[dict] = []
         self.buffering_records = not verbose and context_size > 0
-        self.pre_buffer_lines: list[str] = []
 
         self.json_buffer: list[str] = []
         self.buffering_json = False
@@ -87,7 +86,8 @@ class ContextTracker:
         self.buffering_json = False
         return buf
 
-    def build_context_block(self) -> str | None:
+    def take_context(self) -> dict[str, str] | None:
+        """Return detected context fields and mark them as shown. Returns None if already taken or no fields."""
         if self.context_shown or not self.record_buffer:
             return None
         self.context_shown = True
@@ -97,12 +97,4 @@ class ContextTracker:
             return None
 
         self.context_values = ctx.copy()
-
-        note = colorize(
-            f"  ↑ {len(ctx)} field{'s' if len(ctx) != 1 else ''} shown once above; repeats hidden until changed",
-            "separator",
-        )
-        block = format_block("context", ctx)
-        block_lines = block.split("\n")
-        block_lines.insert(-1, note)
-        return "\n".join(block_lines)
+        return ctx

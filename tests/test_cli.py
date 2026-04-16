@@ -1,5 +1,6 @@
 """Tests for the main processing loop."""
 import json
+import re
 from io import StringIO
 
 from clogs.cli import run
@@ -11,6 +12,10 @@ def _run_clogs(input_text: str, verbose: bool = False, context_size: int | None 
     stdout = StringIO()
     run(stdin, stdout, verbose=verbose, context_size=context_size)
     return stdout.getvalue()
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _make_json_line(**fields) -> str:
@@ -49,11 +54,35 @@ class TestLambdaRuntime:
         assert "handler started" in output
         assert "13:35:29" in output
 
+    def test_runtime_only_stream_flushes_before_eof(self):
+        lines = [
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime one",
+            "[INFO] 2026-03-14T13:35:30.236Z abc-123 [Thread - main] runtime two",
+            "[INFO] 2026-03-14T13:35:31.236Z abc-123 [Thread - main] runtime three",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "runtime one" in output
+        assert "runtime two" in output
+        assert "runtime three" in output
+
 
 class TestPythonStdlib:
     def test_python_stdlib_formatted(self):
         output = _run_clogs("INFO:my_module:Connecting to database")
         assert "Connecting to database" in output
+
+    def test_stdlib_only_stream_flushes_before_eof(self):
+        lines = [
+            "INFO:my_module:message one",
+            "WARNING:my_module:message two",
+            "ERROR:my_module:message three",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "message one" in output
+        assert "message two" in output
+        assert "message three" in output
 
 
 class TestNoiseSuppression:
@@ -72,6 +101,18 @@ class TestPassthrough:
         output = _run_clogs("some random output text")
         assert "some random output text" in output
 
+    def test_passthrough_only_stream_flushes_before_eof(self):
+        lines = [
+            "first passthrough line",
+            "second passthrough line",
+            "third passthrough line",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "first passthrough line" in output
+        assert "second passthrough line" in output
+        assert "third passthrough line" in output
+
 
 class TestStartupGrouping:
     def test_startup_lines_grouped(self):
@@ -86,6 +127,19 @@ class TestStartupGrouping:
 
 
 class TestMultilineJsonReturn:
+    def test_mid_stream_multiline_dict_not_labeled_return(self):
+        lines = [
+            _make_json_line(message="before"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            _make_json_line(message="after"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "statusCode" in output
+        assert "─── return " not in output
+
     def test_multiline_dict_formatted_as_return_block(self):
         lines = [
             _make_json_line(message="before return"),
@@ -110,6 +164,18 @@ class TestMultilineJsonReturn:
         assert "return" in output
         assert "nested" in output
 
+    def test_terminal_multiline_dict_still_labeled_return(self):
+        lines = [
+            _make_json_line(message="before return"),
+            _make_json_line(message="still before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
     def test_multiline_array_formatted(self):
         """A top-level JSON array return should be captured and formatted."""
         lines = [
@@ -132,6 +198,21 @@ class TestMultilineJsonReturn:
         assert "first" in output
         assert "line 0" in output
         assert "line 209" in output
+
+    def test_multiline_json_during_buffering_preserves_order(self):
+        lines = [
+            _make_json_line(message="msg0", service="svc"),
+            _make_json_line(message="msg1", service="svc"),
+            "{",
+            '  "foo": 1',
+            "}",
+            _make_json_line(message="msg2", service="svc"),
+            _make_json_line(message="msg3", service="svc"),
+            _make_json_line(message="msg4", service="svc"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert output.index("msg0") < output.index('"foo": 1')
+        assert output.index("msg1") < output.index('"foo": 1')
 
 
 class TestContextFlag:
@@ -237,3 +318,16 @@ class TestContextFlag:
         assert "billing" in output
         assert "context" in output
 
+    def test_mixed_stream_with_late_json_still_builds_context(self):
+        lines = [
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime one",
+            "[INFO] 2026-03-14T13:35:30.236Z abc-123 [Thread - main] runtime two",
+            _make_json_line(message="msg0", service="billing"),
+            _make_json_line(message="msg1", service="billing"),
+            _make_json_line(message="msg2", service="billing"),
+        ]
+        output = _run_clogs("\n".join(lines), context_size=3)
+        assert "runtime one" in output
+        assert "runtime two" in output
+        assert "context" in output
+        assert "billing" in output
