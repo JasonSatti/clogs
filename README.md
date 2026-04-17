@@ -72,6 +72,9 @@ clogs --context 0
 > **Note:** When piping, only stdout reaches `clogs`. If your tool writes logs
 > to stderr, merge streams first: `my-command 2>&1 | clogs`
 
+`clogs` respects [`NO_COLOR`](https://no-color.org) - set the env var (any
+value) to disable all ANSI codes.
+
 ## How it works
 
 **Context block** - the first few JSON records are buffered to find fields

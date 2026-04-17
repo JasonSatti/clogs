@@ -1,5 +1,6 @@
 """Tests for the main processing loop."""
 import json
+import re
 from io import StringIO
 
 from clogs.cli import run
@@ -11,6 +12,10 @@ def _run_clogs(input_text: str, verbose: bool = False, context_size: int | None 
     stdout = StringIO()
     run(stdin, stdout, verbose=verbose, context_size=context_size)
     return stdout.getvalue()
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _make_json_line(**fields) -> str:
@@ -49,11 +54,35 @@ class TestLambdaRuntime:
         assert "handler started" in output
         assert "13:35:29" in output
 
+    def test_runtime_only_stream_flushes_before_eof(self):
+        lines = [
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime one",
+            "[INFO] 2026-03-14T13:35:30.236Z abc-123 [Thread - main] runtime two",
+            "[INFO] 2026-03-14T13:35:31.236Z abc-123 [Thread - main] runtime three",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "runtime one" in output
+        assert "runtime two" in output
+        assert "runtime three" in output
+
 
 class TestPythonStdlib:
     def test_python_stdlib_formatted(self):
         output = _run_clogs("INFO:my_module:Connecting to database")
         assert "Connecting to database" in output
+
+    def test_stdlib_only_stream_flushes_before_eof(self):
+        lines = [
+            "INFO:my_module:message one",
+            "WARNING:my_module:message two",
+            "ERROR:my_module:message three",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "message one" in output
+        assert "message two" in output
+        assert "message three" in output
 
 
 class TestNoiseSuppression:
@@ -72,6 +101,24 @@ class TestPassthrough:
         output = _run_clogs("some random output text")
         assert "some random output text" in output
 
+    def test_passthrough_only_stream_flushes_before_eof(self):
+        lines = [
+            "first passthrough line",
+            "second passthrough line",
+            "third passthrough line",
+        ]
+        output = _run_clogs("\n".join(lines))
+        assert output
+        assert "first passthrough line" in output
+        assert "second passthrough line" in output
+        assert "third passthrough line" in output
+
+    def test_passthrough_only_stream_has_no_startup_header(self):
+        """Startup header should not appear when no structured record follows."""
+        output = _strip_ansi(_run_clogs("my-command output\nanother line"))
+        assert "startup" not in output
+        assert "my-command output" in output
+
 
 class TestStartupGrouping:
     def test_startup_lines_grouped(self):
@@ -86,6 +133,19 @@ class TestStartupGrouping:
 
 
 class TestMultilineJsonReturn:
+    def test_mid_stream_multiline_dict_not_labeled_return(self):
+        lines = [
+            _make_json_line(message="before"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            _make_json_line(message="after"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "statusCode" in output
+        assert "─── return " not in output
+
     def test_multiline_dict_formatted_as_return_block(self):
         lines = [
             _make_json_line(message="before return"),
@@ -110,6 +170,113 @@ class TestMultilineJsonReturn:
         assert "return" in output
         assert "nested" in output
 
+    def test_terminal_multiline_dict_still_labeled_return(self):
+        lines = [
+            _make_json_line(message="before return"),
+            _make_json_line(message="still before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
+    def test_return_block_preserved_in_verbose_mode(self):
+        """`-v` (verbose) still renders a terminal multiline dict as a return block."""
+        lines = [
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), verbose=True))
+        assert "─── return " in output
+        assert "statusCode" in output
+
+    def test_return_block_preserved_with_context_zero(self):
+        """`--context 0` still renders a terminal multiline dict as a return block."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=0))
+        assert "─── return " in output
+        assert "before return" in output
+
+    def test_return_block_survives_trailing_blank_lines(self):
+        """Blank lines after a terminal dict must not demote it to generic."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            "",
+            "",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
+    def test_return_block_survives_trailing_suppressed_noise(self):
+        """Suppressed noise (null, ddtrace) after a terminal dict must not demote it."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            "null",
+            '{"traces": [[{"span_id": 1}]]}',
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
+    def test_pure_multiline_dict_at_eof_renders_as_return_block(self):
+        """A lone multiline dict (e.g. local Lambda invoke return) keeps return formatting."""
+        lines = [
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+        assert "statusCode" in output
+
+    def test_pure_multiline_stream_does_not_stall(self):
+        """Pure multiline JSON with no records must not wait for records/EOF-cap."""
+        # Two back-to-back multiline dicts and nothing else. Under the old
+        # bug these would sit in pending_output until 10 blobs accumulated.
+        lines = [
+            "{",
+            '  "a": 1',
+            "}",
+            "{",
+            '  "b": 2',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert '"a": 1' in output
+        # Second blob is still pending at EOF → renders as return-block.
+        assert '"b": 2' in output or "b:" in output
+
+    def test_multiline_after_buffering_flush_still_labeled_return_at_eof(self):
+        """Terminal multiline after the buffering flush still reaches return block at EOF."""
+        lines = []
+        # Exceed context_size=5 to close the buffering window.
+        for i in range(5):
+            lines.append(_make_json_line(message=f"msg{i}"))
+        lines.extend(["{", '  "statusCode": 200,', '  "body": "ok"', "}"])
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "statusCode" in output
+        # Single-slot hold now applies in every mode, so the terminal dict
+        # still renders as a return block.
+        assert "─── return " in output
+
     def test_multiline_array_formatted(self):
         """A top-level JSON array return should be captured and formatted."""
         lines = [
@@ -132,6 +299,28 @@ class TestMultilineJsonReturn:
         assert "first" in output
         assert "line 0" in output
         assert "line 209" in output
+
+    def test_multiline_json_during_buffering_preserves_context_window(self):
+        # `region` is a preferred field only present in msg2-4. Under the bug
+        # that flushed the record buffer on `{`, only msg0-1 would be in the
+        # window when context is built, so region would never enter the block.
+        lines = [
+            _make_json_line(message="msg0", service="svc"),
+            _make_json_line(message="msg1", service="svc"),
+            "{",
+            '  "foo": 1',
+            "}",
+            _make_json_line(message="msg2", service="svc", region="us-east-1"),
+            _make_json_line(message="msg3", service="svc", region="us-east-1"),
+            _make_json_line(message="msg4", service="svc", region="us-east-1"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── context ───" in output
+        context_start = output.index("─── context ───")
+        context_end = output.index("─" * 60, context_start + 20)
+        context_section = output[context_start:context_end]
+        assert "region:" in context_section
+        assert '"foo": 1' in output
 
 
 class TestContextFlag:
@@ -237,3 +426,73 @@ class TestContextFlag:
         assert "billing" in output
         assert "context" in output
 
+    def test_non_json_interleaved_does_not_shrink_context_window(self):
+        # Under the bug, a traceback after msg0 would flush the buffer early.
+        # Only msg0 would reach the context block — `region` (only in msg1-4)
+        # would never be detected as stable.
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            "Traceback (most recent call last):",
+            _make_json_line(message="msg1", service="billing", region="us-east-1"),
+            _make_json_line(message="msg2", service="billing", region="us-east-1"),
+            _make_json_line(message="msg3", service="billing", region="us-east-1"),
+            _make_json_line(message="msg4", service="billing", region="us-east-1"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── context ───" in output
+        context_start = output.index("─── context ───")
+        context_end = output.index("─" * 60, context_start + 20)
+        context_section = output[context_start:context_end]
+        assert "region:" in context_section
+
+    def test_interleaved_non_json_preserves_source_order(self):
+        """A traceback line between buffered JSON records must not print first."""
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            "Traceback (most recent call last):",
+            _make_json_line(message="msg1", service="billing"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        msg0_pos = output.index("msg0")
+        trace_pos = output.index("Traceback")
+        msg1_pos = output.index("msg1")
+        assert msg0_pos < trace_pos < msg1_pos
+
+    def test_interleaved_multiline_json_preserves_source_order(self):
+        """A mid-stream multiline blob between buffered records must emit between them."""
+        lines = [
+            _make_json_line(message="msg0", service="billing"),
+            _make_json_line(message="msg1", service="billing"),
+            "{",
+            '  "foo": 1',
+            "}",
+            _make_json_line(message="msg2", service="billing"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        msg1_pos = output.index("msg1")
+        foo_pos = output.index('"foo": 1')
+        msg2_pos = output.index("msg2")
+        assert msg1_pos < foo_pos < msg2_pos
+
+    def test_long_startup_preamble_does_not_disable_context(self):
+        """15 passthrough lines before records must not prevent context detection."""
+        lines = [f"startup log line {i}" for i in range(15)]
+        for i in range(3):
+            lines.append(_make_json_line(message=f"msg{i}", service="billing"))
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=3))
+        assert "─── context ───" in output
+        assert "billing" in output
+
+    def test_mixed_stream_with_late_json_still_builds_context(self):
+        lines = [
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime one",
+            "[INFO] 2026-03-14T13:35:30.236Z abc-123 [Thread - main] runtime two",
+            _make_json_line(message="msg0", service="billing"),
+            _make_json_line(message="msg1", service="billing"),
+            _make_json_line(message="msg2", service="billing"),
+        ]
+        output = _run_clogs("\n".join(lines), context_size=3)
+        assert "runtime one" in output
+        assert "runtime two" in output
+        assert "context" in output
+        assert "billing" in output

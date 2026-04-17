@@ -5,6 +5,8 @@ import json
 import re
 from enum import Enum, auto
 
+from clogs.config import MAX_JSON_PARSE_BYTES
+
 
 class LineType(Enum):
     JSON_LOG = auto()
@@ -53,15 +55,32 @@ _STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):(\S+):(.*)")
 # Python warnings format: /path/to/file.py:42: DeprecationWarning: message
 _WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")
 
+# ddtrace writer output prefix. The tracer can flush hundreds of spans as a
+# single multi-MB line; match on the prefix so we skip the expensive json.loads.
+_DDTRACE_PREFIX_RE = re.compile(r'^\{\s*"traces"\s*:')
+
 
 def parse_line(line: str) -> ParsedLine:
     """Classify a raw log line and extract its fields."""
-    stripped = line.strip()
+    raw = line.rstrip("\r\n")
+    stripped = raw.strip()
 
     if not stripped:
         return ParsedLine(LineType.BLANK)
 
     if stripped.startswith("{"):
+        oversized = len(stripped) > MAX_JSON_PARSE_BYTES
+
+        # Fast-path for pathological ddtrace span batches: a multi-MB blob
+        # whose prefix matches and which carries no "message" field is pure
+        # noise — skip the cost of json.loads entirely.
+        if (
+            oversized
+            and _DDTRACE_PREFIX_RE.match(stripped)
+            and '"message"' not in stripped
+        ):
+            return ParsedLine(LineType.NOISE)
+
         try:
             record = json.loads(stripped)
             if isinstance(record, dict):
@@ -71,6 +90,14 @@ def parse_line(line: str) -> ParsedLine:
                     return ParsedLine(LineType.NOISE)
         except json.JSONDecodeError:
             pass
+
+        # Oversized JSON that isn't a recognized log shape — truncate instead
+        # of letting a multi-MB blob fall through as a giant passthrough.
+        if oversized:
+            return ParsedLine(
+                LineType.PASSTHROUGH,
+                message=stripped[:1024] + "… (truncated)",
+            )
 
         if stripped == "{":
             return ParsedLine(LineType.MULTILINE_JSON_START)
@@ -121,4 +148,4 @@ def parse_line(line: str) -> ParsedLine:
     if stripped.startswith("Configured ddtrace instrumentation"):
         return ParsedLine(LineType.NOISE)
 
-    return ParsedLine(LineType.PASSTHROUGH, message=stripped)
+    return ParsedLine(LineType.PASSTHROUGH, message=raw)

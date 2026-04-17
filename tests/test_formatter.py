@@ -1,6 +1,8 @@
 """Tests for formatting functions."""
 import json
 
+import pytest
+
 from clogs.formatter import (
     colorize,
     format_block,
@@ -13,6 +15,13 @@ from clogs.formatter import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _unset_no_color(monkeypatch):
+    # Ambient NO_COLOR in the shell would suppress ANSI and break tests that
+    # assert specific color codes. Tests for NO_COLOR behavior re-set it explicitly.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+
 class TestColorize:
     def test_known_color(self):
         result = colorize("hello", "info")
@@ -21,6 +30,20 @@ class TestColorize:
 
     def test_unknown_color_passes_through(self):
         assert colorize("hello", "nonexistent") == "hello"
+
+    def test_no_color_env_suppresses_ansi(self, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "1")
+        assert colorize("hello", "info") == "hello"
+
+    def test_no_color_empty_value_still_suppresses(self, monkeypatch):
+        # no-color.org spec: presence alone disables color, regardless of value.
+        monkeypatch.setenv("NO_COLOR", "")
+        assert colorize("hello", "info") == "hello"
+
+    def test_no_color_unset_keeps_color(self, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        result = colorize("hello", "info")
+        assert "\033[" in result
 
 
 class TestFormatTimestamp:
@@ -148,11 +171,18 @@ class TestReturnValue:
 
 class TestFormatRuntimeLine:
     def test_contains_all_fields(self):
-        result = format_runtime_line("INFO", "2026-03-14T13:35:29.236Z", "main", "handler started")
+        result = format_runtime_line("INFO", "2026-03-14T13:35:29.236Z", "worker-1", "handler started")
         assert "13:35:29" in result
         assert "INFO" in result
-        assert "main" in result
+        assert "worker-1" in result
         assert "handler started" in result
+
+    def test_default_main_location_hidden(self):
+        result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "main", "msg")
+        # `main` is the default thread name on every Lambda runtime line —
+        # suppress it as noise alongside MainThread.
+        assert "main" not in result.replace("msg", "")  # avoid false match in unrelated text
+        assert "msg" in result
 
     def test_warning_abbreviated(self):
         result = format_runtime_line("WARNING", "2026-03-14T00:00:00Z", "loc", "msg")
@@ -162,6 +192,15 @@ class TestFormatRuntimeLine:
     def test_separator_present(self):
         result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "loc", "msg")
         assert "│" in result
+
+    def test_main_thread_location_hidden(self):
+        result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "MainThread", "msg")
+        assert "MainThread" not in result
+        assert "msg" in result
+
+    def test_non_main_thread_preserved(self):
+        result = format_runtime_line("INFO", "2026-03-14T00:00:00Z", "worker-1", "msg")
+        assert "worker-1" in result
 
 
 class TestFormatStdlibLine:

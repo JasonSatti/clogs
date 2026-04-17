@@ -28,8 +28,68 @@ class TestJsonLog:
         parsed = parse_line(line)
         assert parsed.line_type == LineType.NOISE
 
+    def test_ddtrace_large_batch_suppressed(self):
+        # The tracer can flush hundreds of spans as one multi-MB line. The
+        # prefix fast-path should classify it as noise without needing to
+        # successfully json.loads() the whole thing.
+        spans = [
+            {"trace_id": f"T{i}", "span_id": f"S{i}", "duration": i}
+            for i in range(1000)
+        ]
+        line = json.dumps({"traces": [spans]})
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.NOISE
+
+    def test_ddtrace_oversized_batch_suppressed(self):
+        # The prefix heuristic only kicks in for lines too large to parse —
+        # that's when we can't let json.loads inspect the keys.
+        huge = '{"traces": [' + ",".join(f'"span{i}"' for i in range(100_000)) + "]}"
+        parsed = parse_line(huge)
+        assert parsed.line_type == LineType.NOISE
+
+    def test_oversized_record_with_traces_and_message_not_dropped(self):
+        # An oversized record that happens to lead with "traces" but also
+        # carries a real "message" must not be silently dropped — the
+        # normal-size path treats it as a JSON log, so the oversized path
+        # should at least pass it through rather than swallow it.
+        huge = (
+            '{"traces": [' + ",".join(f'"span{i}"' for i in range(100_000)) + "],"
+            ' "message": "done"}'
+        )
+        parsed = parse_line(huge)
+        assert parsed.line_type != LineType.NOISE
+
+    def test_oversized_json_log_with_message_still_parsed(self):
+        # A >64KB JSON log record with a real "message" must still classify
+        # as JSON_LOG. The size guard only short-circuits for ddtrace-shaped
+        # blobs; valid oversized records should round-trip through json.loads.
+        big_payload = "x" * 100_000
+        line = json.dumps({
+            "level": "INFO",
+            "message": "dumping payload",
+            "payload": big_payload,
+        })
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "dumping payload"
+
+    def test_oversized_json_line_truncated_to_passthrough(self):
+        # Pathological huge JSON lines fall through without hitting json.loads.
+        huge = '{"key": "' + ("x" * 200_000) + '"}'
+        parsed = parse_line(huge)
+        assert parsed.line_type == LineType.PASSTHROUGH
+        assert "truncated" in parsed.message
+        assert len(parsed.message) < 2000
+
     def test_json_with_message_and_traces_is_log(self):
         line = json.dumps({"message": "done", "traces": [{"span_id": 123}]})
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "done"
+
+    def test_traces_first_with_message_is_log(self):
+        # Key order is emitter-dependent — message must still win when present.
+        line = json.dumps({"traces": [{"span_id": 123}], "message": "done"})
         parsed = parse_line(line)
         assert parsed.line_type == LineType.JSON_LOG
         assert parsed.record["message"] == "done"
@@ -87,13 +147,28 @@ class TestNoiseSuppression:
 
     def test_indented_lines_pass_through(self):
         """Indented lines (e.g., stack traces) should not be swallowed as noise."""
-        assert parse_line("  File \"/app/handler.py\", line 42, in process").line_type == LineType.PASSTHROUGH
-        assert parse_line("    raise ValueError('bad input')").line_type == LineType.PASSTHROUGH
+        parsed_file = parse_line("  File \"/app/handler.py\", line 42, in process")
+        parsed_raise = parse_line("    raise ValueError('bad input')")
+        assert parsed_file.line_type == LineType.PASSTHROUGH
+        assert parsed_file.message == "  File \"/app/handler.py\", line 42, in process"
+        assert parsed_raise.line_type == LineType.PASSTHROUGH
+        assert parsed_raise.message == "    raise ValueError('bad input')"
 
     def test_bullet_lines_pass_through(self):
         parsed = parse_line("  * 'foo' support is deprecated")
         assert parsed.line_type == LineType.PASSTHROUGH
-        assert parsed.message == "* 'foo' support is deprecated"
+        assert parsed.message == "  * 'foo' support is deprecated"
+
+    def test_stacktrace_indentation_preserved(self):
+        lines = [
+            "Traceback (most recent call last):",
+            "  File \"/app/handler.py\", line 42, in process",
+            "    raise ValueError('bad input')",
+        ]
+        parsed = [parse_line(line) for line in lines]
+        assert parsed[0].message == "Traceback (most recent call last):"
+        assert parsed[1].message == "  File \"/app/handler.py\", line 42, in process"
+        assert parsed[2].message == "    raise ValueError('bad input')"
 
     def test_blank_line(self):
         assert parse_line("").line_type == LineType.BLANK

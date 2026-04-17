@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 
 from clogs.config import CONTEXT_BUFFER_SIZE, JSON_BUFFER_MAX_LINES, KNOWN_FIELDS, PREFERRED_CONTEXT_FIELDS
-from clogs.formatter import colorize, format_block
 
 
 def detect_constant_fields(records: list[dict]) -> dict[str, str]:
@@ -53,18 +52,46 @@ class ContextTracker:
         self.context_size = context_size
         self.context_shown = False
         self.context_values: dict[str, str] = {}
+        # True once any non-record line has been streamed before the first
+        # JSON record; drives lazy startup-header emission at the point the
+        # first record arrives.
+        self.pre_record_streamed = False
+        # Single-slot hold for a completed multi-line JSON blob that we
+        # can't yet classify as mid-stream vs terminal. Used whenever the
+        # blob isn't already being queued into `pending_output` (i.e.
+        # pre-record phase, verbose, or --context 0). Flushed as generic
+        # when a subsequent line produces visible output, or as a return
+        # block at EOF — the one case where we can prove it was terminal.
+        self.held_multiline: list[str] | None = None
 
-        self.record_buffer: list[dict] = []
+        # Interleaved buffer used during the context-detection window. Each
+        # item is one of:
+        #   - dict: a JSON log record (drives context detection)
+        #   - str:  a pre-rendered non-JSON line (passthrough/runtime/etc.)
+        #   - list[str]: a completed multi-line JSON blob, deferred so the
+        #     flush path can decide generic-vs-return rendering based on
+        #     whether EOF actually arrived while it was still pending.
+        self.pending_output: list[dict | str | list[str]] = []
         self.buffering_records = not verbose and context_size > 0
-        self.pre_buffer_lines: list[str] = []
 
         self.json_buffer: list[str] = []
         self.buffering_json = False
 
     def add_record(self, record: dict) -> bool:
-        """Buffer a record. Returns True when the buffer is full."""
-        self.record_buffer.append(record)
-        return len(self.record_buffer) >= self.context_size
+        """Buffer a record. Returns True once context_size records are in."""
+        self.pending_output.append(record)
+        return sum(1 for item in self.pending_output if isinstance(item, dict)) >= self.context_size
+
+    def add_formatted(self, line: str) -> None:
+        """Buffer a formatted non-JSON line so it emits in source order."""
+        self.pending_output.append(line)
+
+    def add_multiline(self, buf: list[str]) -> None:
+        """Buffer a completed multi-line JSON blob for ordered flushing."""
+        self.pending_output.append(buf)
+
+    def has_records(self) -> bool:
+        return any(isinstance(item, dict) for item in self.pending_output)
 
     def start_json_buffer(self, first_line: str) -> None:
         self.buffering_json = True
@@ -87,22 +114,16 @@ class ContextTracker:
         self.buffering_json = False
         return buf
 
-    def build_context_block(self) -> str | None:
-        if self.context_shown or not self.record_buffer:
+    def take_context(self) -> dict[str, str] | None:
+        """Return detected context fields and mark them as shown. Returns None if already taken or no fields."""
+        records = [item for item in self.pending_output if isinstance(item, dict)]
+        if self.context_shown or not records:
             return None
         self.context_shown = True
 
-        ctx = detect_constant_fields(self.record_buffer)
+        ctx = detect_constant_fields(records)
         if not ctx:
             return None
 
         self.context_values = ctx.copy()
-
-        note = colorize(
-            f"  ↑ {len(ctx)} field{'s' if len(ctx) != 1 else ''} shown once above; repeats hidden until changed",
-            "separator",
-        )
-        block = format_block("context", ctx)
-        block_lines = block.split("\n")
-        block_lines.insert(-1, note)
-        return "\n".join(block_lines)
+        return ctx

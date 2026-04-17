@@ -102,7 +102,7 @@ class TestContextTracker:
         ctx = ContextTracker(verbose=True)
         assert not ctx.buffering_records
 
-    def test_context_block_built_once(self):
+    def test_context_taken_once(self):
         ctx = ContextTracker(verbose=False)
         for i in range(3):
             ctx.add_record({
@@ -112,13 +112,12 @@ class TestContextTracker:
                 "service": "my-service",
                 "function_name": "handler",
             })
-        block = ctx.build_context_block()
-        assert block is not None
-        assert "my-service" in block
-        assert "handler" in block
+        fields = ctx.take_context()
+        assert fields is not None
+        assert fields["service"] == "my-service"
+        assert fields["function_name"] == "handler"
 
-        # Second call returns None
-        assert ctx.build_context_block() is None
+        assert ctx.take_context() is None
 
     def test_context_values_populated(self):
         ctx = ContextTracker(verbose=False)
@@ -128,7 +127,7 @@ class TestContextTracker:
             "service": "svc",
             "function_name": "fn",
         })
-        ctx.build_context_block()
+        ctx.take_context()
         assert ctx.context_values["service"] == "svc"
         assert ctx.context_values["function_name"] == "fn"
 
