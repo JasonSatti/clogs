@@ -182,6 +182,59 @@ class TestMultilineJsonReturn:
         output = _strip_ansi(_run_clogs("\n".join(lines)))
         assert "─── return " in output
 
+    def test_return_block_preserved_in_verbose_mode(self):
+        """`-v` (verbose) still renders a terminal multiline dict as a return block."""
+        lines = [
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), verbose=True))
+        assert "─── return " in output
+        assert "statusCode" in output
+
+    def test_return_block_preserved_with_context_zero(self):
+        """`--context 0` still renders a terminal multiline dict as a return block."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=0))
+        assert "─── return " in output
+        assert "before return" in output
+
+    def test_return_block_survives_trailing_blank_lines(self):
+        """Blank lines after a terminal dict must not demote it to generic."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            "",
+            "",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
+    def test_return_block_survives_trailing_suppressed_noise(self):
+        """Suppressed noise (null, ddtrace) after a terminal dict must not demote it."""
+        lines = [
+            _make_json_line(message="before return"),
+            "{",
+            '  "statusCode": 200,',
+            '  "body": "ok"',
+            "}",
+            "null",
+            '{"traces": [[{"span_id": 1}]]}',
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+
     def test_pure_multiline_dict_at_eof_renders_as_return_block(self):
         """A lone multiline dict (e.g. local Lambda invoke return) keeps return formatting."""
         lines = [
@@ -211,8 +264,8 @@ class TestMultilineJsonReturn:
         # Second blob is still pending at EOF → renders as return-block.
         assert '"b": 2' in output or "b:" in output
 
-    def test_multiline_after_buffering_flush_renders_immediately_as_generic(self):
-        """Post-buffer multiline must render as generic (not wait for next line)."""
+    def test_multiline_after_buffering_flush_still_labeled_return_at_eof(self):
+        """Terminal multiline after the buffering flush still reaches return block at EOF."""
         lines = []
         # Exceed context_size=5 to close the buffering window.
         for i in range(5):
@@ -220,8 +273,9 @@ class TestMultilineJsonReturn:
         lines.extend(["{", '  "statusCode": 200,', '  "body": "ok"', "}"])
         output = _strip_ansi(_run_clogs("\n".join(lines)))
         assert "statusCode" in output
-        # Terminal multiline past the buffer window is generic, not return-block.
-        assert "─── return " not in output
+        # Single-slot hold now applies in every mode, so the terminal dict
+        # still renders as a return block.
+        assert "─── return " in output
 
     def test_multiline_array_formatted(self):
         """A top-level JSON array return should be captured and formatted."""

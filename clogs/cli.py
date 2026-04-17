@@ -116,11 +116,11 @@ def run(
         kwargs["context_size"] = context_size
     ctx = ContextTracker(**kwargs)
 
-    def _flush_pre_record_multiline_as_generic() -> None:
-        if ctx.pre_record_multiline is None:
+    def _flush_held_as_generic() -> None:
+        if ctx.held_multiline is None:
             return
-        result = _flush_json_buffer(ctx.pre_record_multiline, is_final=False)
-        ctx.pre_record_multiline = None
+        result = _flush_json_buffer(ctx.held_multiline, is_final=False)
+        ctx.held_multiline = None
         if result:
             _write(stdout, result)
             if ctx.buffering_records:
@@ -130,11 +130,6 @@ def run(
         for line in stdin:
             stripped = line.strip()
 
-            # Any new line proves the previous pre-record multiline wasn't
-            # terminal — flush it as generic before processing the new line.
-            if ctx.pre_record_multiline is not None and not ctx.buffering_json:
-                _flush_pre_record_multiline_as_generic()
-
             if ctx.buffering_json:
                 if ctx.append_json_line(stripped):
                     buf = ctx.take_json_buffer()
@@ -142,19 +137,24 @@ def run(
                         # Inside the context window, after the first record.
                         # Queue in source order so flush can decide rendering.
                         ctx.add_multiline(buf)
-                    elif ctx.buffering_records:
-                        # Pre-record phase — hold for one slot so a terminal
-                        # invoke-return dict can still render as return block.
-                        ctx.pre_record_multiline = buf
                     else:
-                        # Buffering disabled (verbose or --context 0) — render
-                        # immediately.
-                        result = _flush_json_buffer(buf, is_final=False)
-                        if result:
-                            _write(stdout, result)
+                        # Pre-record phase, verbose, or --context 0 — hold
+                        # for one slot so a terminal invoke-return dict can
+                        # still render as a return block at EOF.
+                        ctx.held_multiline = buf
                 continue
 
             parsed = parse_line(line)
+
+            # A held multiline only loses its return-block eligibility when
+            # the next line actually produces visible output. Blank lines
+            # and suppressed noise (null, ddtrace spans) don't count.
+            if (
+                ctx.held_multiline is not None
+                and parsed.line_type is not LineType.BLANK
+                and parsed.line_type is not LineType.NOISE
+            ):
+                _flush_held_as_generic()
 
             if parsed.line_type is LineType.MULTILINE_JSON_START:
                 ctx.start_json_buffer(stripped)
@@ -190,9 +190,9 @@ def run(
 
         # EOF handling. Any still-pending multiline at the very end is the
         # one case where we can prove it's terminal — render as return block.
-        if ctx.pre_record_multiline is not None:
-            result = _flush_json_buffer(ctx.pre_record_multiline, is_final=True)
-            ctx.pre_record_multiline = None
+        if ctx.held_multiline is not None:
+            result = _flush_json_buffer(ctx.held_multiline, is_final=True)
+            ctx.held_multiline = None
             if result:
                 _write(stdout, result)
         if ctx.buffering_records:
