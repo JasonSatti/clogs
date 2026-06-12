@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from clogs.config import COLORS
+from clogs.config import BADGE_COLORS, COLORS
 from clogs.formatter import (
     colorize,
     format_block,
@@ -16,6 +16,7 @@ from clogs.formatter import (
     format_stdlib_line,
     format_timestamp,
     reset_layout,
+    set_badges,
     set_color_enabled,
 )
 
@@ -30,9 +31,11 @@ def _clean_state(monkeypatch):
     # assert specific color codes. Tests for NO_COLOR behavior re-set it explicitly.
     monkeypatch.delenv("NO_COLOR", raising=False)
     set_color_enabled(None)
+    set_badges(False)
     reset_layout()
     yield
     set_color_enabled(None)
+    set_badges(False)
     reset_layout()
 
 
@@ -108,6 +111,55 @@ class TestFormatLevel:
     def test_long_unknown_level_truncated_to_column_width(self):
         result = _strip_ansi(format_level("EXCEPTION"))
         assert len(result) == 5
+
+
+class TestBadges:
+    @pytest.fixture(autouse=True)
+    def _badges_on(self):
+        set_badges(True)
+        yield
+        set_badges(False)
+
+    def test_chip_text_centered_with_one_space_each_side(self):
+        result = _strip_ansi(format_level("INFO"))
+        assert result == " INFO  "  # chip ' INFO ' + 1 col pad to cell width
+        result = _strip_ansi(format_level("ERROR"))
+        assert result == " ERROR "
+
+    def test_chip_uses_badge_color(self):
+        result = format_level("WARNING")
+        assert BADGE_COLORS["warning"] in result
+        assert " WARN " in result
+
+    def test_all_cells_same_width(self):
+        widths = {
+            len(_strip_ansi(format_level(lvl)))
+            for lvl in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+        }
+        assert len(widths) == 1
+
+    def test_separator_stays_aligned_across_levels(self):
+        out_info = _strip_ansi(
+            format_json_line(
+                {"level": "INFO", "message": "a", "timestamp": "2026-03-14T08:00:00Z"},
+                {},
+                verbose=False,
+            )
+        )
+        out_error = _strip_ansi(
+            format_json_line(
+                {"level": "ERROR", "message": "b", "timestamp": "2026-03-14T08:00:01Z"},
+                {},
+                verbose=False,
+            )
+        )
+        assert out_info.index("│") == out_error.index("│")
+
+    def test_no_color_renders_plain_chip(self):
+        set_color_enabled(False)
+        result = format_level("INFO")
+        assert result == " INFO  "
+        assert "\033[" not in result
 
 
 class TestFormatLocation:

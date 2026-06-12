@@ -21,6 +21,7 @@ from clogs.formatter import (
     format_warning,
     observe_record,
     reset_layout,
+    set_badges,
     set_color_enabled,
 )
 from clogs.parser import LineType, ParsedLine, parse_line
@@ -262,6 +263,11 @@ def main() -> None:
         default="auto",
         help="when to emit ANSI colors (default: auto — on for terminals, off when piped or NO_COLOR is set)",
     )
+    parser.add_argument(
+        "--badges",
+        action="store_true",
+        help="render log levels as filled chips (Datadog status-chip style)",
+    )
     args = parser.parse_args()
     if args.context is not None and args.context < 0:
         parser.error("--context must be >= 0")
@@ -273,6 +279,7 @@ def main() -> None:
     else:
         set_color_enabled(sys.stdout.isatty() and not os.environ.get("NO_COLOR"))
 
+    set_badges(args.badges)
     run(sys.stdin, sys.stdout, verbose=args.verbose, context_size=args.context)
 
 

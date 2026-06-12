@@ -6,6 +6,7 @@ import os
 import shutil
 
 from clogs.config import (
+    BADGE_COLORS,
     BAR_GLYPH,
     BAR_WIDTH,
     BLOCK_WIDTH,
@@ -27,6 +28,14 @@ _color_override: bool | None = None
 # timestamps or with short locations don't pay for fixed-width dead space.
 _loc_width = 0
 _ts_seen = False
+
+# --badges: render levels as filled chips (Datadog status-chip style)
+_badges = False
+
+
+def set_badges(enabled: bool) -> None:
+    global _badges
+    _badges = enabled
 
 
 def set_color_enabled(enabled: bool | None) -> None:
@@ -66,9 +75,14 @@ def observe_record(record: dict) -> None:
         observe_location(str(record["location"]))
 
 
+def _level_cell_width() -> int:
+    # Badge chips wrap the level in one space per side
+    return LEVEL_WIDTH + 2 if _badges else LEVEL_WIDTH
+
+
 def _sep_col() -> int:
     """Column of the `│` separator under the current adaptive layout."""
-    col = BAR_WIDTH + LEVEL_WIDTH + 1
+    col = BAR_WIDTH + _level_cell_width() + 1
     if _ts_seen:
         col += TIMESTAMP_WIDTH + 1
     if _loc_width:
@@ -130,6 +144,15 @@ def format_level(level: str) -> str:
     color_key = _level_color_key(level)
     level_upper = level.upper()
     display = _LEVEL_DISPLAY.get(level_upper, level_upper)[:LEVEL_WIDTH]
+    if _badges:
+        # Chip hugs the word with one space per side, so the text is centered
+        # by construction; the cell pads after the chip to stay aligned.
+        chip = f" {display} "
+        pad = " " * (_level_cell_width() - len(chip))
+        code = BADGE_COLORS.get(color_key, "") if _color_enabled() else ""
+        if code:
+            return f"{code}{chip}{RESET}{pad}"
+        return chip + pad
     return colorize(display.ljust(LEVEL_WIDTH), color_key)
 
 

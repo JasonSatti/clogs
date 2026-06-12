@@ -22,18 +22,33 @@ def _fg(hex_color: str, fallback: int, *, bold: bool = False) -> str:
     return f"\033[{prefix}38;5;{fallback}m"
 
 
+def _badge(hex_color: str, fallback: int) -> str:
+    """Filled-badge code: dark text on a level-colored background."""
+    if _TRUECOLOR:
+        r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+        return f"\033[1;38;2;22;24;29;48;2;{r};{g};{b}m"
+    return f"\033[1;38;5;235;48;5;{fallback}m"
+
+
 # Datadog-inspired palette. Truecolor hex values approximate the Log Explorer
-# status colors and brand purple; the second argument is the 256-color
-# fallback used when COLORTERM doesn't advertise truecolor.
+# status colors and brand purple; the second value is the 256-color fallback
+# used when COLORTERM doesn't advertise truecolor.
+LEVEL_PALETTE = {
+    "info": ("#3D7FE0", 33),
+    "warning": ("#FFAC2E", 214),
+    "error": ("#EB4D58", 9),
+    "critical": ("#FF6B7A", 196),
+    "debug": ("#8C939E", 248),
+    "ok": ("#53B06A", 78),
+}
+
+# Filled level chips for --badges mode (Datadog status-chip style)
+BADGE_COLORS = {k: _badge(h, f) for k, (h, f) in LEVEL_PALETTE.items()}
+
 # Set any value to "" to disable coloring for that element.
 COLORS = {
     # Log levels (also used for the left status bar)
-    "info": _fg("#3D7FE0", 33, bold=True),
-    "warning": _fg("#FFAC2E", 214, bold=True),
-    "error": _fg("#EB4D58", 9, bold=True),
-    "critical": _fg("#FF6B7A", 196, bold=True),
-    "debug": _fg("#8C939E", 248, bold=True),
-    "ok": _fg("#53B06A", 78, bold=True),
+    **{k: _fg(h, f, bold=True) for k, (h, f) in LEVEL_PALETTE.items()},
     # Log content
     "message": _fg("#D6D9DE", 252),
     "message_warning": _fg("#F2CE8B", 222),

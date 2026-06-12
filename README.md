@@ -76,6 +76,9 @@ clogs --context 0
 # Force colors on/off (default: auto — on for terminals, off when piped)
 clogs --color always
 clogs --color never
+
+# Render levels as filled chips (Datadog status-chip style)
+clogs --badges
 ```
 
 > **Note:** When piping, only stdout reaches `clogs`. If your tool writes logs
