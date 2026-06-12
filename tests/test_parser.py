@@ -117,6 +117,12 @@ class TestLambdaRuntime:
         assert parsed.line_type == LineType.LAMBDA_RUNTIME
         assert parsed.level == "ERROR"
 
+    def test_shorthand_levels_parsed(self):
+        assert parse_line("FATAL:my_logger:boom").line_type == LineType.PYTHON_STDLIB
+        assert parse_line("CRIT:my_logger:boom").line_type == LineType.PYTHON_STDLIB
+        line = "[FATAL] 2026-03-14T13:35:29.236Z req-1 [Thread - main] boom"
+        assert parse_line(line).line_type == LineType.LAMBDA_RUNTIME
+
     def test_no_thread_segment(self):
         """Real CloudWatch runtime format: tab-separated, no thread part."""
         line = "[INFO]\t2026-03-14T13:35:29.236Z\t6f1b1c8e-1234\thandler started"
@@ -249,6 +255,32 @@ class TestWarnings:
     def test_framework_warning(self):
         parsed = parse_line("Warning: This feature is deprecated")
         assert parsed.line_type == LineType.FRAMEWORK_WARNING
+
+
+class TestLambdaLifecycle:
+    def test_start_line(self):
+        parsed = parse_line("START RequestId: 6f1b1c8e-1234 Version: $LATEST")
+        assert parsed.line_type == LineType.LAMBDA_START
+        assert parsed.message == "6f1b1c8e-1234"
+
+    def test_end_line_is_noise(self):
+        assert parse_line("END RequestId: 6f1b1c8e-1234").line_type == LineType.NOISE
+
+    def test_report_line_parsed(self):
+        line = (
+            "REPORT RequestId: 6f1b1c8e\tDuration: 142.33 ms\t"
+            "Billed Duration: 200 ms\tMemory Size: 512 MB\t"
+            "Max Memory Used: 87 MB\tInit Duration: 803.12 ms"
+        )
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.LAMBDA_REPORT
+        assert parsed.record["request_id"] == "6f1b1c8e"
+        assert parsed.record["Duration"] == "142.33 ms"
+        assert parsed.record["Init Duration"] == "803.12 ms"
+
+    def test_traceback_start(self):
+        parsed = parse_line("Traceback (most recent call last):")
+        assert parsed.line_type == LineType.TRACEBACK_START
 
 
 class TestPassthrough:

@@ -79,6 +79,23 @@ class ContextTracker:
         self._json_depth = 0
         self._json_in_string = False
 
+        # Invocation tracking: divider emitted when the request id changes
+        self.last_request_id: str | None = None
+        # Raw-traceback grouping state (styling of indented frame lines)
+        self.in_traceback = False
+        # Output filters, set by run() from --level / --grep
+        self.min_level_rank: int | None = None
+        self.grep = None
+
+    def note_request_id(self, request_id: str | None) -> bool:
+        """Track the current request id. Returns True when it changes
+        (i.e. a new invocation started) — not on the first one seen."""
+        if not request_id or request_id == self.last_request_id:
+            return False
+        is_change = self.last_request_id is not None
+        self.last_request_id = request_id
+        return is_change
+
     def add_record(self, record: dict) -> bool:
         """Buffer a record. Returns True once context_size records are in."""
         self.pending_output.append(record)
@@ -88,9 +105,15 @@ class ContextTracker:
         """Buffer a formatted non-JSON line so it emits in source order."""
         self.pending_output.append(line)
 
-    def add_multiline(self, buf: list[str]) -> None:
-        """Buffer a completed multi-line JSON blob for ordered flushing."""
-        self.pending_output.append(buf)
+    def stash_blob(self, buf: list[str]) -> None:
+        """Route a completed JSON blob. During the context window it queues
+        in source order so the flush decides return-vs-generic rendering;
+        otherwise it occupies the single held slot so a terminal blob can
+        still render as a return block at EOF."""
+        if self.buffering_records and self.has_records():
+            self.pending_output.append(buf)
+        else:
+            self.held_multiline = buf
 
     def has_records(self) -> bool:
         return any(isinstance(item, dict) for item in self.pending_output)

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+from datetime import datetime
 
+from clogs import config
 from clogs.config import (
     BADGE_COLORS,
     BAR_GLYPH,
@@ -12,8 +15,8 @@ from clogs.config import (
     BLOCK_WIDTH,
     COLORS,
     KNOWN_FIELDS,
+    LEVEL_ALIASES,
     LEVEL_WIDTH,
-    LOCATION_WIDTH,
     RESET,
     TIMESTAMP_WIDTH,
 )
@@ -32,10 +35,29 @@ _ts_seen = False
 # --badges: render levels as filled chips (Datadog status-chip style)
 _badges = False
 
+# --delta: show elapsed time since the previous timestamped record
+_delta_on = False
+_prev_dt: datetime | None = None
+DELTA_WIDTH = 7
+
+# --grep: highlight matches in messages and tags
+_grep: re.Pattern | None = None
+
 
 def set_badges(enabled: bool) -> None:
     global _badges
     _badges = enabled
+
+
+def set_delta(enabled: bool) -> None:
+    global _delta_on, _prev_dt
+    _delta_on = enabled
+    _prev_dt = None
+
+
+def set_grep(pattern: re.Pattern | None) -> None:
+    global _grep
+    _grep = pattern
 
 
 def set_color_enabled(enabled: bool | None) -> None:
@@ -51,15 +73,16 @@ def _color_enabled() -> bool:
 
 
 def reset_layout() -> None:
-    global _loc_width, _ts_seen
+    global _loc_width, _ts_seen, _prev_dt
     _loc_width = 0
     _ts_seen = False
+    _prev_dt = None
 
 
 def observe_location(loc: str) -> None:
     global _loc_width
     if len(loc) > _loc_width:
-        _loc_width = min(len(loc), LOCATION_WIDTH)
+        _loc_width = min(len(loc), config.LOCATION_WIDTH)
 
 
 def observe_timestamp() -> None:
@@ -88,6 +111,8 @@ def _sep_col() -> int:
     col = BAR_WIDTH + _level_cell_width() + 1
     if _ts_seen:
         col += TIMESTAMP_WIDTH + 1
+        if _delta_on:
+            col += DELTA_WIDTH + 1
     if _loc_width:
         col += _loc_width + 1
     return col
@@ -113,22 +138,17 @@ def _terminal_width() -> int:
 
 _LEVEL_DISPLAY = {"WARNING": "WARN", "CRITICAL": "CRIT"}
 
-# Common shorthand levels emitted by non-Python loggers
-_LEVEL_ALIASES = {"warn": "warning", "crit": "critical", "fatal": "critical"}
+_MESSAGE_COLORS = {
+    "error": "message_error",
+    "critical": "message_error",
+    "warning": "message_warning",
+}
 
 
 def _level_color_key(level: str) -> str:
     key = level.lower()
-    key = _LEVEL_ALIASES.get(key, key)
+    key = LEVEL_ALIASES.get(key, key)
     return key if key in COLORS else "info"
-
-
-def _message_color_key(level_key: str) -> str:
-    if level_key in ("error", "critical"):
-        return "message_error"
-    if level_key == "warning":
-        return "message_warning"
-    return "message"
 
 
 def _bar(level_key: str) -> str:
@@ -178,6 +198,53 @@ def format_location(loc: str) -> str:
     return colorize(display, "location")
 
 
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _format_delta_text(seconds: float) -> str:
+    sign = "-" if seconds < 0 else "+"
+    s = abs(seconds)
+    if s < 10:
+        return f"{sign}{s:.2f}s"
+    if s < 60:
+        return f"{sign}{s:.1f}s"
+    if s < 3600:
+        return f"{sign}{int(s // 60)}m{int(s % 60):02d}s"
+    return f"{sign}{s / 3600:.1f}h"
+
+
+def _delta_color(seconds: float) -> str:
+    if seconds >= 5:
+        return "error"
+    if seconds >= 1:
+        return "warning"
+    return "timestamp"
+
+
+def _delta_column(ts: str) -> str:
+    """Elapsed-time cell for --delta mode: time since the previous
+    timestamped record, color-stepped when gaps grow."""
+    if not _delta_on:
+        return ""
+    global _prev_dt
+    dt = _parse_ts(ts) if ts else None
+    if dt is None:
+        return " " * DELTA_WIDTH if _ts_seen else ""
+    prev, _prev_dt = _prev_dt, dt
+    if prev is None:
+        return " " * DELTA_WIDTH
+    try:
+        seconds = (dt - prev).total_seconds()
+    except TypeError:  # mixed naive/aware timestamps
+        return " " * DELTA_WIDTH
+    text = _format_delta_text(seconds).rjust(DELTA_WIDTH)
+    return colorize(text, _delta_color(seconds))
+
+
 def format_message(msg: object, level_key: str = "info") -> str:
     if not isinstance(msg, str):
         msg = json.dumps(msg, separators=(", ", ": "))
@@ -185,11 +252,11 @@ def format_message(msg: object, level_key: str = "info") -> str:
 
 
 def _wrap_message(msg_text: str, level_key: str = "info") -> str:
-    msg_color = _message_color_key(level_key)
+    msg_color = _MESSAGE_COLORS.get(level_key, "message")
     term_width = _terminal_width()
     available = term_width - _msg_col()
     if available < 20 or len(msg_text) <= available:
-        return colorize(msg_text, msg_color)
+        return colorize(_highlight(msg_text), msg_color)
 
     words = msg_text.split(" ")
     lines: list[str] = []
@@ -218,14 +285,17 @@ def _wrap_message(msg_text: str, level_key: str = "info") -> str:
         lines.append(current)
 
     cont = _cont_prefix(level_key)
-    colored = [colorize(lines[0], msg_color)]
+    colored = [colorize(_highlight(lines[0]), msg_color)]
     for line in lines[1:]:
-        colored.append(cont + colorize(line, msg_color))
+        colored.append(cont + colorize(_highlight(line), msg_color))
     return "\n".join(colored)
 
 
-def format_tag(k: str, v: object) -> str:
-    return colorize(f"{k}={v}", "tag")
+def _highlight(text: str) -> str:
+    """Mark --grep matches with reverse video (preserves surrounding color)."""
+    if _grep is None or not _color_enabled():
+        return text
+    return _grep.sub(lambda m: f"\033[7m{m.group(0)}\033[27m", text)
 
 
 def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
@@ -251,24 +321,20 @@ def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
 
     out: list[str] = []
     for i, row in enumerate(rows):
-        joined = "  ".join(colorize(seg, "tag") for seg in row)
+        joined = "  ".join(colorize(_highlight(seg), "tag") for seg in row)
         marker = colorize("↳ ", "separator") if i == 0 else "  "
         out.append(cont + marker + joined)
     return out
 
 
-def _block_header(title: str) -> str:
+def format_section_header(title: str) -> str:
     bar = colorize("─" * 3, "separator")
     trail = colorize("─" * (BLOCK_WIDTH - len(title) - 5), "separator")
     return f"{bar} {colorize(title, 'block_header')} {trail}"
 
 
-def format_section_header(title: str) -> str:
-    return _block_header(title)
-
-
 def format_block(title: str, data: dict) -> str:
-    lines = [_block_header(title)]
+    lines = [format_section_header(title)]
     max_key = max(len(k) for k in data) if data else 0
     for k, v in data.items():
         padded = f"  {k}:".ljust(max_key + 4)  # 2 indent + key + colon + padding
@@ -319,7 +385,7 @@ def _render_body(body: object, key_prefix: str, lines: list[str]) -> None:
 
 
 def format_return_value(obj: dict) -> str:
-    lines = ["\n" + _block_header("return")]
+    lines = ["\n" + format_section_header("return")]
     max_key = max(len(k) for k in obj) if obj else 0
     for k, v in obj.items():
         padded = f"  {k}:".ljust(max_key + 4)
@@ -341,26 +407,19 @@ def format_return_value(obj: dict) -> str:
 
 
 def format_json_line(record: dict, context_values: dict[str, str], verbose: bool) -> str:
-    """Format a JSON log record as a colored line with suppressed-repeat tags.
-
-    Parameters
-    ----------
-    record : dict
-        Parsed JSON log record.
-    context_values : dict
-        Rolling baseline of previously seen field values. Mutated in-place
-        to track suppressions across calls.
-    verbose : bool
-        If True, show all fields and skip suppression.
-    """
+    """Format a JSON log record as a colored line with its tags. Mutates
+    context_values to suppress repeated tag values across calls (unless
+    verbose)."""
     observe_record(record)
 
     level = record.get("level", "INFO")
     level_key = _level_color_key(level)
 
+    ts = record.get("timestamp", "")
     parts: list[str] = [
         _bar(level_key),
-        _timestamp_column(record.get("timestamp", "")),
+        _timestamp_column(ts),
+        _delta_column(ts),
         format_level(level),
         format_location(str(record.get("location", ""))) if _loc_width else "",
         colorize("│", "separator"),
@@ -368,10 +427,15 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     ]
     lines = [" ".join(p for p in parts if p)]
 
+    # Powertools logger.exception() puts the traceback in `exception` —
+    # render it as a block instead of a one-line tag.
+    exception = record.get("exception")
+    has_exception_block = isinstance(exception, str) and "\n" in exception
+
     # Show each extra field once, then suppress until its value changes
     tag_dict: dict[str, object] = {}
     for k, v in record.items():
-        if k in KNOWN_FIELDS:
+        if k in KNOWN_FIELDS or (k == "exception" and has_exception_block):
             continue
         sv = str(v)
         if not verbose and context_values.get(k) == sv:
@@ -383,7 +447,22 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     if tag_dict:
         lines.extend(_format_tags(tag_dict, level_key))
 
+    if has_exception_block:
+        lines.extend(_format_exception(exception, level_key))
+
     return "\n".join(lines)
+
+
+def _format_exception(text: str, level_key: str) -> list[str]:
+    """Render a traceback string: frames dim, header and final line red."""
+    cont = _cont_prefix(level_key)
+    raw_lines = [ln for ln in text.split("\n") if ln.strip()]
+    out = []
+    for i, ln in enumerate(raw_lines):
+        is_frame = ln.startswith((" ", "\t")) and 0 < i < len(raw_lines) - 1
+        style = "non_json" if is_frame else "message_error"
+        out.append(cont + colorize(ln, style))
+    return out
 
 
 def _timestamp_column(ts: str) -> str:
@@ -404,32 +483,27 @@ def format_warning(msg: str) -> str:
     return colorize(f"  ⚠ {msg}", "non_json")
 
 
-def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
-    # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
-    # `MainThread`. Both are noise — hide them, keep other thread names.
-    level_key = _level_color_key(level)
-    display_loc = "" if location in ("main", "MainThread") else location
-    observe_location(display_loc)
-    parts = [
-        _bar(level_key),
-        _timestamp_column(timestamp),
-        format_level(level),
-        format_location(display_loc) if _loc_width else "",
-        colorize("│", "separator"),
-        _wrap_message(message, level_key),
-    ]
-    return " ".join(p for p in parts if p)
-
-
-def format_stdlib_line(level: str, location: str, message: str, timestamp: str = "") -> str:
+def _format_plain_line(level: str, timestamp: str, location: str, message: str) -> str:
     level_key = _level_color_key(level)
     observe_location(location)
     parts = [
         _bar(level_key),
         _timestamp_column(timestamp),
+        _delta_column(timestamp),
         format_level(level),
         format_location(location) if _loc_width else "",
         colorize("│", "separator"),
         _wrap_message(message, level_key),
     ]
     return " ".join(p for p in parts if p)
+
+
+def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
+    # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
+    # `MainThread`. Both are noise — hide them, keep other thread names.
+    display_loc = "" if location in ("main", "MainThread") else location
+    return _format_plain_line(level, timestamp, display_loc, message)
+
+
+def format_stdlib_line(level: str, location: str, message: str, timestamp: str = "") -> str:
+    return _format_plain_line(level, timestamp, location, message)

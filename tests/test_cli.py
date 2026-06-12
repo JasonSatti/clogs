@@ -2,22 +2,33 @@
 from __future__ import annotations
 
 import json
-import re
 from io import StringIO
 
 from clogs.cli import run
+from tests.helpers import strip_ansi as _strip_ansi
 
 
-def _run_clogs(input_text: str, verbose: bool = False, context_size: int | None = None) -> str:
+def _run_clogs(
+    input_text: str,
+    verbose: bool = False,
+    context_size: int | None = None,
+    min_level: str | None = None,
+    grep: str | None = None,
+    delta: bool = False,
+) -> str:
     """Run clogs in-process and return output."""
     stdin = StringIO(input_text)
     stdout = StringIO()
-    run(stdin, stdout, verbose=verbose, context_size=context_size)
+    run(
+        stdin,
+        stdout,
+        verbose=verbose,
+        context_size=context_size,
+        min_level=min_level,
+        grep=grep,
+        delta=delta,
+    )
     return stdout.getvalue()
-
-
-def _strip_ansi(text: str) -> str:
-    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _make_json_line(**fields) -> str:
@@ -449,6 +460,235 @@ class TestDdtraceBanner:
         )
         output = _run_clogs(line)
         assert output.strip() == ""
+
+
+class TestLifecycleLines:
+    def test_report_rendered_as_block(self):
+        line = (
+            "REPORT RequestId: 6f1b1c8e\tDuration: 142.33 ms\t"
+            "Billed Duration: 200 ms\tMemory Size: 512 MB\tMax Memory Used: 87 MB"
+        )
+        output = _strip_ansi(_run_clogs(line))
+        assert "─── report " in output
+        assert "Duration:" in output
+        assert "142.33 ms" in output
+        assert "Max Memory Used:" in output
+
+    def test_start_renders_invocation_divider(self):
+        output = _strip_ansi(_run_clogs("START RequestId: 6f1b1c8e Version: $LATEST"))
+        assert "─── invocation 6f1b1c8e " in output
+
+    def test_end_suppressed(self):
+        output = _run_clogs("END RequestId: 6f1b1c8e")
+        assert output.strip() == ""
+
+    def test_request_id_change_emits_divider(self):
+        lines = [
+            _make_json_line(message="first", request_id="req-aaa"),
+            _make_json_line(message="second", request_id="req-aaa"),
+            _make_json_line(message="third", request_id="req-bbb"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=0))
+        assert "─── invocation req-bbb " in output
+        # no divider for the first invocation (context covers it)
+        assert "─── invocation req-aaa " not in output
+        assert output.index("second") < output.index("invocation req-bbb") < output.index("third")
+
+
+class TestLifecycleOnlyStreams:
+    def test_no_false_startup_header(self):
+        """REPORT output is structural — it must not earn a startup label."""
+        lines = [
+            "START RequestId: req-a Version: $LATEST",
+            "REPORT RequestId: req-a\tDuration: 100 ms\tBilled Duration: 100 ms",
+            "START RequestId: req-b Version: $LATEST",
+            "REPORT RequestId: req-b\tDuration: 200 ms\tBilled Duration: 200 ms",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "startup" not in output
+        assert "─── invocation req-a " in output
+        assert "─── invocation req-b " in output
+
+    def test_real_chatter_still_gets_startup_header(self):
+        lines = [
+            "Loading configuration...",
+            "START RequestId: req-a Version: $LATEST",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "↑ startup" in output
+        assert output.index("Loading configuration") < output.index("↑ startup")
+
+
+class TestConfigPrecedence:
+    def _run_main(self, config_text, *argv, stdin=""):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(config_text)
+            path = f.name
+        return subprocess.run(
+            [sys.executable, "-m", "clogs", "--color", "never", *argv],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLOGS_CONFIG": path},
+        ).stdout
+
+    def test_no_badges_overrides_config_true(self):
+        line = _make_json_line(message="hello")
+        with_config = self._run_main("[defaults]\nbadges = true\n", stdin=line)
+        overridden = self._run_main(
+            "[defaults]\nbadges = true\n", "--no-badges", stdin=line
+        )
+        assert "  INFO  " in with_config  # 8-wide badge cell
+        assert "  INFO  " not in overridden
+
+    def test_level_all_overrides_config_minimum(self):
+        line = _make_json_line(message="visible info")
+        filtered = self._run_main("[defaults]\nlevel = \"error\"\n", stdin=line)
+        cleared = self._run_main(
+            "[defaults]\nlevel = \"error\"\n", "--level", "all", stdin=line
+        )
+        assert "visible info" not in filtered
+        assert "visible info" in cleared
+
+
+class TestTracebacks:
+    def test_exception_field_rendered_as_block(self):
+        record = json.dumps({
+            "level": "ERROR", "location": "h:9", "message": "boom",
+            "timestamp": "2026-03-14T08:42:15.123Z",
+            "exception": 'Traceback (most recent call last):\n  File "/app/h.py", line 4\nValueError: 1',
+            "exception_name": "ValueError",
+        })
+        output = _strip_ansi(_run_clogs(record, context_size=0))
+        assert 'File "/app/h.py", line 4' in output
+        # rendered as block lines, not a one-line exception= tag
+        assert "exception=Traceback" not in output
+        assert "exception_name=ValueError" in output
+
+    def test_raw_traceback_lines_grouped(self):
+        lines = [
+            _make_json_line(message="before"),
+            "Traceback (most recent call last):",
+            '  File "/app/handler.py", line 42, in process',
+            "    raise ValueError(1)",
+            "ValueError: 1",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "Traceback (most recent call last):" in output
+        assert "ValueError: 1" in output
+
+
+class TestLevelFilter:
+    def test_min_level_hides_lower(self):
+        lines = [
+            _make_json_line(message="info msg"),
+            _make_json_line(message="warn msg", level="WARNING"),
+            _make_json_line(message="error msg", level="ERROR"),
+        ]
+        output = _run_clogs("\n".join(lines), min_level="warning")
+        assert "info msg" not in output
+        assert "warn msg" in output
+        assert "error msg" in output
+
+    def test_runtime_and_stdlib_filtered(self):
+        lines = [
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] runtime info",
+            "INFO:mod:stdlib info",
+            "ERROR:mod:stdlib error",
+        ]
+        output = _run_clogs("\n".join(lines), min_level="error")
+        assert "runtime info" not in output
+        assert "stdlib info" not in output
+        assert "stdlib error" in output
+
+    def test_aliases(self):
+        lines = [_make_json_line(message="error msg", level="ERROR")]
+        output = _run_clogs("\n".join(lines), min_level="warn")
+        assert "error msg" in output
+
+
+class TestGrepFilter:
+    def test_only_matching_records_shown(self):
+        lines = [
+            _make_json_line(message="Querying DynamoDB"),
+            _make_json_line(message="Cache miss"),
+        ]
+        output = _run_clogs("\n".join(lines), grep="dynamodb")
+        assert "DynamoDB" in output
+        assert "Cache miss" not in output
+
+    def test_matches_tags_too(self):
+        lines = [
+            _make_json_line(message="first", table="users-dev"),
+            _make_json_line(message="second"),
+        ]
+        output = _run_clogs("\n".join(lines), grep="users-dev")
+        assert "first" in output
+        assert "second" not in output
+
+    def test_return_block_kept(self):
+        lines = [
+            _make_json_line(message="nothing matches"),
+            "{",
+            '  "statusCode": 200',
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), grep="zzz"))
+        assert "nothing matches" not in output
+        assert "─── return " in output
+
+    def test_passthrough_filtered(self):
+        output = _run_clogs("random chatter line", grep="zzz")
+        assert "random chatter" not in output
+
+
+class TestDelta:
+    def test_delta_column_shows_elapsed(self):
+        lines = [
+            _make_json_line(message="first", timestamp="2026-03-14T08:42:15.000Z"),
+            _make_json_line(message="second", timestamp="2026-03-14T08:42:18.010Z"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), delta=True))
+        assert "+3.01s" in output
+
+    def test_no_delta_without_flag(self):
+        lines = [
+            _make_json_line(message="first", timestamp="2026-03-14T08:42:15.000Z"),
+            _make_json_line(message="second", timestamp="2026-03-14T08:42:18.010Z"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "+3.01s" not in output
+
+
+class TestWrapperMode:
+    def test_command_output_formatted(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "clogs", "--color", "never", "--", "echo", "hello wrapper"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "hello wrapper" in result.stdout
+
+    def test_exit_code_propagated(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "clogs", "--color", "never", "--",
+             sys.executable, "-c", "import sys; sys.exit(3)"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 3
 
 
 class TestContextFlag:
