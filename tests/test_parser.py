@@ -236,6 +236,32 @@ class TestWarnings:
         assert parsed.line_type == LineType.FRAMEWORK_WARNING
 
 
+class TestLambdaLifecycle:
+    def test_start_line(self):
+        parsed = parse_line("START RequestId: 6f1b1c8e-1234 Version: $LATEST")
+        assert parsed.line_type == LineType.LAMBDA_START
+        assert parsed.message == "6f1b1c8e-1234"
+
+    def test_end_line_is_noise(self):
+        assert parse_line("END RequestId: 6f1b1c8e-1234").line_type == LineType.NOISE
+
+    def test_report_line_parsed(self):
+        line = (
+            "REPORT RequestId: 6f1b1c8e\tDuration: 142.33 ms\t"
+            "Billed Duration: 200 ms\tMemory Size: 512 MB\t"
+            "Max Memory Used: 87 MB\tInit Duration: 803.12 ms"
+        )
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.LAMBDA_REPORT
+        assert parsed.record["request_id"] == "6f1b1c8e"
+        assert parsed.record["Duration"] == "142.33 ms"
+        assert parsed.record["Init Duration"] == "803.12 ms"
+
+    def test_traceback_start(self):
+        parsed = parse_line("Traceback (most recent call last):")
+        assert parsed.line_type == LineType.TRACEBACK_START
+
+
 class TestPassthrough:
     def test_plain_text(self):
         parsed = parse_line("some random output")

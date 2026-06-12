@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+from datetime import datetime
 
+from clogs import config
 from clogs.config import (
     BADGE_COLORS,
     BAR_GLYPH,
@@ -13,7 +16,6 @@ from clogs.config import (
     COLORS,
     KNOWN_FIELDS,
     LEVEL_WIDTH,
-    LOCATION_WIDTH,
     RESET,
     TIMESTAMP_WIDTH,
 )
@@ -32,10 +34,29 @@ _ts_seen = False
 # --badges: render levels as filled chips (Datadog status-chip style)
 _badges = False
 
+# --delta: show elapsed time since the previous timestamped record
+_delta_on = False
+_prev_dt: datetime | None = None
+DELTA_WIDTH = 7
+
+# --grep: highlight matches in messages and tags
+_grep: re.Pattern | None = None
+
 
 def set_badges(enabled: bool) -> None:
     global _badges
     _badges = enabled
+
+
+def set_delta(enabled: bool) -> None:
+    global _delta_on, _prev_dt
+    _delta_on = enabled
+    _prev_dt = None
+
+
+def set_grep(pattern: re.Pattern | None) -> None:
+    global _grep
+    _grep = pattern
 
 
 def set_color_enabled(enabled: bool | None) -> None:
@@ -51,15 +72,16 @@ def _color_enabled() -> bool:
 
 
 def reset_layout() -> None:
-    global _loc_width, _ts_seen
+    global _loc_width, _ts_seen, _prev_dt
     _loc_width = 0
     _ts_seen = False
+    _prev_dt = None
 
 
 def observe_location(loc: str) -> None:
     global _loc_width
     if len(loc) > _loc_width:
-        _loc_width = min(len(loc), LOCATION_WIDTH)
+        _loc_width = min(len(loc), config.LOCATION_WIDTH)
 
 
 def observe_timestamp() -> None:
@@ -88,6 +110,8 @@ def _sep_col() -> int:
     col = BAR_WIDTH + _level_cell_width() + 1
     if _ts_seen:
         col += TIMESTAMP_WIDTH + 1
+        if _delta_on:
+            col += DELTA_WIDTH + 1
     if _loc_width:
         col += _loc_width + 1
     return col
@@ -174,6 +198,53 @@ def format_location(loc: str) -> str:
     return colorize(display, "location")
 
 
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _format_delta_text(seconds: float) -> str:
+    sign = "-" if seconds < 0 else "+"
+    s = abs(seconds)
+    if s < 10:
+        return f"{sign}{s:.2f}s"
+    if s < 60:
+        return f"{sign}{s:.1f}s"
+    if s < 3600:
+        return f"{sign}{int(s // 60)}m{int(s % 60):02d}s"
+    return f"{sign}{s / 3600:.1f}h"
+
+
+def _delta_color(seconds: float) -> str:
+    if seconds >= 5:
+        return "error"
+    if seconds >= 1:
+        return "warning"
+    return "timestamp"
+
+
+def _delta_column(ts: str) -> str:
+    """Elapsed-time cell for --delta mode: time since the previous
+    timestamped record, color-stepped when gaps grow."""
+    if not _delta_on:
+        return ""
+    global _prev_dt
+    dt = _parse_ts(ts) if ts else None
+    if dt is None:
+        return " " * DELTA_WIDTH if _ts_seen else ""
+    prev, _prev_dt = _prev_dt, dt
+    if prev is None:
+        return " " * DELTA_WIDTH
+    try:
+        seconds = (dt - prev).total_seconds()
+    except TypeError:  # mixed naive/aware timestamps
+        return " " * DELTA_WIDTH
+    text = _format_delta_text(seconds).rjust(DELTA_WIDTH)
+    return colorize(text, _delta_color(seconds))
+
+
 def format_message(msg: object, level_key: str = "info") -> str:
     if not isinstance(msg, str):
         msg = json.dumps(msg, separators=(", ", ": "))
@@ -185,7 +256,7 @@ def _wrap_message(msg_text: str, level_key: str = "info") -> str:
     term_width = _terminal_width()
     available = term_width - _msg_col()
     if available < 20 or len(msg_text) <= available:
-        return colorize(msg_text, msg_color)
+        return colorize(_highlight(msg_text), msg_color)
 
     words = msg_text.split(" ")
     lines: list[str] = []
@@ -214,14 +285,21 @@ def _wrap_message(msg_text: str, level_key: str = "info") -> str:
         lines.append(current)
 
     cont = _cont_prefix(level_key)
-    colored = [colorize(lines[0], msg_color)]
+    colored = [colorize(_highlight(lines[0]), msg_color)]
     for line in lines[1:]:
-        colored.append(cont + colorize(line, msg_color))
+        colored.append(cont + colorize(_highlight(line), msg_color))
     return "\n".join(colored)
 
 
+def _highlight(text: str) -> str:
+    """Mark --grep matches with reverse video (preserves surrounding color)."""
+    if _grep is None or not _color_enabled():
+        return text
+    return _grep.sub(lambda m: f"\033[7m{m.group(0)}\033[27m", text)
+
+
 def format_tag(k: str, v: object) -> str:
-    return colorize(f"{k}={v}", "tag")
+    return colorize(_highlight(f"{k}={v}"), "tag")
 
 
 def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
@@ -247,7 +325,7 @@ def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
 
     out: list[str] = []
     for i, row in enumerate(rows):
-        joined = "  ".join(colorize(seg, "tag") for seg in row)
+        joined = "  ".join(colorize(_highlight(seg), "tag") for seg in row)
         marker = colorize("↳ ", "separator") if i == 0 else "  "
         out.append(cont + marker + joined)
     return out
@@ -354,9 +432,11 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     level = record.get("level", "INFO")
     level_key = _level_color_key(level)
 
+    ts = record.get("timestamp", "")
     parts: list[str] = [
         _bar(level_key),
-        _timestamp_column(record.get("timestamp", "")),
+        _timestamp_column(ts),
+        _delta_column(ts),
         format_level(level),
         format_location(str(record.get("location", ""))) if _loc_width else "",
         colorize("│", "separator"),
@@ -364,10 +444,15 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     ]
     lines = [" ".join(p for p in parts if p)]
 
+    # Powertools logger.exception() puts the traceback in `exception` —
+    # render it as a block instead of a one-line tag.
+    exception = record.get("exception")
+    has_exception_block = isinstance(exception, str) and "\n" in exception
+
     # Show each extra field once, then suppress until its value changes
     tag_dict: dict[str, object] = {}
     for k, v in record.items():
-        if k in KNOWN_FIELDS:
+        if k in KNOWN_FIELDS or (k == "exception" and has_exception_block):
             continue
         sv = str(v)
         if not verbose and context_values.get(k) == sv:
@@ -379,7 +464,22 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     if tag_dict:
         lines.extend(_format_tags(tag_dict, level_key))
 
+    if has_exception_block:
+        lines.extend(_format_exception(exception, level_key))
+
     return "\n".join(lines)
+
+
+def _format_exception(text: str, level_key: str) -> list[str]:
+    """Render a traceback string: frames dim, header and final line red."""
+    cont = _cont_prefix(level_key)
+    raw_lines = [ln for ln in text.split("\n") if ln.strip()]
+    out = []
+    for i, ln in enumerate(raw_lines):
+        is_frame = ln.startswith((" ", "\t")) and 0 < i < len(raw_lines) - 1
+        style = "non_json" if is_frame else "message_error"
+        out.append(cont + colorize(ln, style))
+    return out
 
 
 def _timestamp_column(ts: str) -> str:
@@ -409,6 +509,7 @@ def format_runtime_line(level: str, timestamp: str, location: str, message: str)
     parts = [
         _bar(level_key),
         _timestamp_column(timestamp),
+        _delta_column(timestamp),
         format_level(level),
         format_location(display_loc) if _loc_width else "",
         colorize("│", "separator"),
@@ -423,6 +524,7 @@ def format_stdlib_line(level: str, location: str, message: str) -> str:
     parts = [
         _bar(level_key),
         _timestamp_column(""),
+        _delta_column(""),
         format_level(level),
         format_location(location) if _loc_width else "",
         colorize("│", "separator"),

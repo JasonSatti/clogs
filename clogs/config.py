@@ -22,6 +22,74 @@ def _fg(hex_color: str, fallback: int, *, bold: bool = False) -> str:
     return f"\033[{prefix}38;5;{fallback}m"
 
 
+# Approximations of the 16 basic ANSI colors for index→RGB conversion
+_BASIC_16 = [
+    (0, 0, 0), (205, 49, 49), (13, 188, 121), (229, 229, 16),
+    (36, 114, 200), (188, 63, 188), (17, 168, 205), (229, 229, 229),
+    (102, 102, 102), (241, 76, 76), (35, 209, 139), (245, 245, 67),
+    (59, 142, 234), (214, 112, 214), (41, 184, 219), (255, 255, 255),
+]
+_CUBE_LEVELS = (0, 95, 135, 175, 215, 255)
+
+
+def _idx_to_rgb(idx: int) -> tuple[int, int, int]:
+    """Convert a 256-palette index to RGB."""
+    if idx < 16:
+        return _BASIC_16[idx]
+    if idx < 232:
+        idx -= 16
+        return (
+            _CUBE_LEVELS[idx // 36],
+            _CUBE_LEVELS[(idx % 36) // 6],
+            _CUBE_LEVELS[idx % 6],
+        )
+    v = 8 + 10 * (idx - 232)
+    return (v, v, v)
+
+
+def _rgb_to_idx(r: int, g: int, b: int) -> int:
+    """Nearest 256-palette index for an RGB color (cube + greyscale ramp)."""
+
+    def nearest_level(v: int) -> int:
+        return min(range(6), key=lambda i: abs(_CUBE_LEVELS[i] - v))
+
+    cr, cg, cb = nearest_level(r), nearest_level(g), nearest_level(b)
+    cube_idx = 16 + 36 * cr + 6 * cg + cb
+    cube_rgb = (_CUBE_LEVELS[cr], _CUBE_LEVELS[cg], _CUBE_LEVELS[cb])
+
+    grey = max(0, min(23, round((((r + g + b) // 3) - 8) / 10)))
+    grey_idx = 232 + grey
+    grey_v = 8 + 10 * grey
+
+    def dist(c: tuple[int, int, int]) -> int:
+        return (c[0] - r) ** 2 + (c[1] - g) ** 2 + (c[2] - b) ** 2
+
+    return cube_idx if dist(cube_rgb) <= dist((grey_v, grey_v, grey_v)) else grey_idx
+
+
+def _parse_hex(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def color_code(spec: "str | int", *, bold: bool = False) -> str:
+    """Build an ANSI code from a user color spec: '#RRGGBB' or 256 index."""
+    if isinstance(spec, int):
+        prefix = "1;" if bold else ""
+        return f"\033[{prefix}38;5;{spec}m"
+    r, g, b = _parse_hex(spec)
+    return _fg(f"#{r:02x}{g:02x}{b:02x}", _rgb_to_idx(r, g, b), bold=bold)
+
+
+def badge_code(spec: "str | int") -> str:
+    """Build a badge (filled chip) ANSI code from a user color spec."""
+    if isinstance(spec, int):
+        r, g, b = _idx_to_rgb(spec)
+        return _badge(f"#{r:02x}{g:02x}{b:02x}", spec)
+    r, g, b = _parse_hex(spec)
+    return _badge(f"#{r:02x}{g:02x}{b:02x}", _rgb_to_idx(r, g, b))
+
+
 def _badge(hex_color: str, fallback: int) -> str:
     """Filled-badge code: dark text on a level-colored background."""
     if _TRUECOLOR:

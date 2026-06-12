@@ -12,9 +12,12 @@ class LineType(Enum):
     JSON_LOG = auto()
     JSON_OBJECT = auto()
     LAMBDA_RUNTIME = auto()
+    LAMBDA_START = auto()
+    LAMBDA_REPORT = auto()
     PYTHON_STDLIB = auto()
     WARNING = auto()
     FRAMEWORK_WARNING = auto()
+    TRACEBACK_START = auto()
     NOISE = auto()
     MULTILINE_JSON_START = auto()
     PASSTHROUGH = auto()
@@ -69,6 +72,24 @@ _LOG_TAIL_PREFIX_RE = re.compile(
 )
 
 _DDTRACE_BANNER = "Configured ddtrace instrumentation"
+
+# Lambda lifecycle lines (CloudWatch / sam local / runtime emulators)
+_START_RE = re.compile(r"^START RequestId:\s+(\S+)")
+_END_RE = re.compile(r"^END RequestId:\s+\S+")
+_REPORT_RE = re.compile(r"^REPORT RequestId:\s+(\S+)\s+(.+)$")
+
+_TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):")
+
+
+def _parse_report(request_id: str, rest: str) -> dict:
+    """Parse REPORT key-value pairs (tab- or multi-space-separated)."""
+    fields: dict = {"request_id": request_id}
+    chunks = rest.split("\t") if "\t" in rest else re.split(r"\s{2,}", rest)
+    for chunk in chunks:
+        key, sep, value = chunk.partition(":")
+        if sep and value.strip():
+            fields[key.strip()] = value.strip()
+    return fields
 
 
 def parse_line(line: str) -> ParsedLine:
@@ -137,6 +158,21 @@ def _classify(raw: str) -> ParsedLine:
 
     if stripped == "[":
         return ParsedLine(LineType.MULTILINE_JSON_START)
+
+    # Lambda lifecycle: START / END / REPORT
+    m = _START_RE.match(stripped)
+    if m:
+        return ParsedLine(LineType.LAMBDA_START, message=m.group(1))
+    if _END_RE.match(stripped):
+        return ParsedLine(LineType.NOISE)  # REPORT carries the useful info
+    m = _REPORT_RE.match(stripped)
+    if m:
+        return ParsedLine(
+            LineType.LAMBDA_REPORT, record=_parse_report(m.group(1), m.group(2))
+        )
+
+    if _TRACEBACK_RE.match(stripped):
+        return ParsedLine(LineType.TRACEBACK_START, message=raw)
 
     # Lambda runtime: [INFO] 2026-03-14T... requestId [Thread - name] message
     m = _LAMBDA_RE.match(stripped)

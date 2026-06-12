@@ -17,6 +17,8 @@ from clogs.formatter import (
     reset_layout,
     set_badges,
     set_color_enabled,
+    set_delta,
+    set_grep,
 )
 
 
@@ -31,10 +33,14 @@ def _clean_state(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     set_color_enabled(None)
     set_badges(False)
+    set_delta(False)
+    set_grep(None)
     reset_layout()
     yield
     set_color_enabled(None)
     set_badges(False)
+    set_delta(False)
+    set_grep(None)
     reset_layout()
 
 
@@ -295,6 +301,81 @@ class TestReturnValue:
         result = _strip_ansi(format_return_value({"statusCode": 200}))
         lines = [ln for ln in result.split("\n") if ln]
         assert len(lines[0]) == len(lines[-1])
+
+
+class TestDeltaColumn:
+    def test_elapsed_time_between_records(self):
+        set_delta(True)
+        format_json_line(
+            {"level": "INFO", "message": "a", "timestamp": "2026-03-14T08:00:00Z"},
+            {}, verbose=False,
+        )
+        out = _strip_ansi(format_json_line(
+            {"level": "INFO", "message": "b", "timestamp": "2026-03-14T08:00:03.500Z"},
+            {}, verbose=False,
+        ))
+        assert "+3.50s" in out
+
+    def test_first_record_blank(self):
+        set_delta(True)
+        out = _strip_ansi(format_json_line(
+            {"level": "INFO", "message": "a", "timestamp": "2026-03-14T08:00:00Z"},
+            {}, verbose=False,
+        ))
+        assert "+0" not in out
+
+    def test_minute_formatting(self):
+        set_delta(True)
+        format_json_line(
+            {"level": "INFO", "message": "a", "timestamp": "2026-03-14T08:00:00Z"},
+            {}, verbose=False,
+        )
+        out = _strip_ansi(format_json_line(
+            {"level": "INFO", "message": "b", "timestamp": "2026-03-14T08:01:30Z"},
+            {}, verbose=False,
+        ))
+        assert "+1m30s" in out
+
+
+class TestGrepHighlight:
+    def test_match_wrapped_in_reverse_video(self):
+        import re as _re
+
+        set_grep(_re.compile("request", _re.IGNORECASE))
+        out = format_json_line(
+            {"level": "INFO", "message": "Incoming request", "timestamp": "t"},
+            {}, verbose=False,
+        )
+        assert "\033[7mrequest\033[27m" in out
+
+    def test_no_highlight_without_color(self):
+        import re as _re
+
+        set_grep(_re.compile("request"))
+        set_color_enabled(False)
+        out = format_json_line(
+            {"level": "INFO", "message": "Incoming request", "timestamp": "t"},
+            {}, verbose=False,
+        )
+        assert "\033[" not in out
+
+
+class TestExceptionField:
+    def test_multiline_exception_rendered_as_block(self):
+        exc = 'Traceback (most recent call last):\n  File "/app/h.py", line 4\nValueError: 1'
+        out = _strip_ansi(format_json_line(
+            {"level": "ERROR", "message": "boom", "timestamp": "t", "exception": exc},
+            {}, verbose=False,
+        ))
+        assert 'File "/app/h.py", line 4' in out
+        assert "exception=" not in out
+
+    def test_single_line_exception_stays_tag(self):
+        out = _strip_ansi(format_json_line(
+            {"level": "ERROR", "message": "boom", "timestamp": "t", "exception": "ValueError"},
+            {}, verbose=False,
+        ))
+        assert "exception=ValueError" in out
 
 
 class TestFormatRuntimeLine:

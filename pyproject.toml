@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+# >=77 for PEP 639 SPDX license expressions
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "clogs"
-version = "0.2.0"
+version = "0.3.0"
 description = "Colorized, condensed log formatting for AWS Lambda, Powertools, and Python logs"
 authors = [{name = "Jason Satti"}]
 keywords = ["lambda", "logs", "cli", "formatter", "powertools"]

@@ -9,11 +9,19 @@ Powertools / Lambda JSON and get colorized, readable output.
 - Hides repeated metadata until values actually change
 - Formats each log line as `▎ timestamp LEVEL location │ message`, with a
   status-colored edge bar on every row (like Datadog's Log Explorer)
+- Marks invocation boundaries (`START` lines / `request_id` changes) and
+  renders Lambda `REPORT` lines as a duration/memory summary block
+- Renders tracebacks readably - both raw ones and Powertools `exception`
+  fields - frames dimmed, the exception line in red
+- Filters: `--level warning` for minimum severity, `--grep pattern` to show
+  only matching records (with matches highlighted)
+- `--delta` shows the elapsed time between records - slow spots jump out
 - Columns size themselves to the content: the location column grows only as
   wide as the longest location seen, and the timestamp column disappears
   for streams that don't have timestamps
 - Datadog-inspired palette - true 24-bit color when the terminal supports
   it (`COLORTERM=truecolor`), 256-color fallback otherwise
+- Configurable via `~/.config/clogs.toml` - colors, layout, default flags
 - No dependencies, just the Python standard library
 
 `cat examples/example.log | clogs`
@@ -55,6 +63,13 @@ sam local invoke MyFunction | clogs
 aws logs tail /aws/lambda/my-function --follow | clogs
 ```
 
+Or let clogs run the command itself - this captures stdout *and* stderr in
+order, so no `2>&1` dance:
+
+```bash
+clogs -- sls invoke local -f my-function --data '{}'
+```
+
 Or read from a file:
 
 ```bash
@@ -72,6 +87,15 @@ clogs -c 10
 
 # Disable the context block entirely
 clogs --context 0
+
+# Only show WARNING and above
+clogs --level warning
+
+# Only show records matching a pattern (case-insensitive regex, highlighted)
+clogs --grep "dynamodb|timeout"
+
+# Show elapsed time between records (slow spots colored orange/red)
+clogs --delta
 
 # Force colors on/off (default: auto — on for terminals, off when piped)
 clogs --color always
@@ -112,7 +136,9 @@ output) are formatted as a `─── return ───` block with color-coded
 |---|---|
 | Powertools JSON | `{"level": "INFO", "location": "handler", "message": "hello", ...}` |
 | Lambda runtime | `[INFO] 2026-03-14T13:35:29.236Z reqId message` (with or without `[Thread - name]`) |
+| Lambda lifecycle | `START` → invocation divider, `REPORT` → summary block, `END` → suppressed |
 | Python stdlib | `INFO:my_logger:message` |
+| Tracebacks | Raw `Traceback (most recent call last):` blocks and Powertools `exception` fields |
 | `aws logs tail` | Any of the above wrapped in the event's ISO timestamp prefix |
 
 Single- or multi-line JSON objects without a `message` field (e.g. invoke
@@ -127,16 +153,33 @@ Other lines are passed through dimmed.
 | Repeated fields suppressed | Yes | No | Yes |
 | Context block at startup | Yes | No | No |
 
-## Customization
+## Configuration
 
-Edit [`clogs/config.py`](clogs/config.py) directly:
+Create `~/.config/clogs.toml` (or point `CLOGS_CONFIG` at a file):
 
-| Setting | What it controls |
-|---|---|
-| `COLORS` | ANSI codes for every element (truecolor hex + 256-color fallback) |
-| `LOCATION_WIDTH` | Maximum width of the adaptive location column (default: 22) |
-| `CONTEXT_BUFFER_SIZE` | Records to buffer for context detection (default: 5) |
-| `PREFERRED_CONTEXT_FIELDS` | Fields eligible for context block with relaxed rules |
+```toml
+[colors]
+# "#RRGGBB" or a 256-palette index; level colors restyle badges too
+info = "#3D7FE0"
+tag = 140
+
+[layout]
+location_width = 22      # cap for the adaptive location column
+
+[context]
+extra_preferred_fields = ["tenant_id"]   # extra fields for the context block
+
+[defaults]               # default flags; CLI arguments override
+badges = true
+delta = true
+level = "info"
+color = "auto"
+context = 5
+```
+
+On Python 3.11+ the file is parsed with the standard library's `tomllib`;
+older versions use a built-in parser that covers this simple subset.
+Defaults for everything live in [`clogs/config.py`](clogs/config.py).
 
 ## Development
 
