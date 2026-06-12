@@ -35,6 +35,13 @@ Powertools / Lambda JSON and get colorized, readable output.
 
 </details>
 
+<details>
+<summary>With <code>--delta</code> on a multi-invocation stream - invocation dividers, REPORT blocks, traceback rendering</summary>
+
+![features](examples/features.png)
+
+</details>
+
 ## Install
 
 Requires **Python 3.9+**. Install from source with [uv](https://docs.astral.sh/uv/):
@@ -105,13 +112,38 @@ clogs --color never
 clogs --badges
 ```
 
-> **Note:** When piping, only stdout reaches `clogs`. If your tool writes logs
-> to stderr, merge streams first: `my-command 2>&1 | clogs`
+### Options reference
+
+| Flag | Description | Default |
+|---|---|---|
+| `-v`, `--verbose` | Show all fields on every line (no suppression) | off |
+| `-c N`, `--context N` | Records buffered for context detection (`0` disables the block) | `5` |
+| `-l`, `--level LEVEL` | Minimum level to show: `debug`, `info`, `warning`, `error`, `critical` (aliases: `warn`, `crit`, `fatal`) | show all |
+| `-g`, `--grep PATTERN` | Only show records matching PATTERN (case-insensitive regex); matches highlighted | show all |
+| `-d`, `--delta` | Show elapsed time since the previous record (orange ≥ 1s, red ≥ 5s) | off |
+| `--badges` | Render levels as filled chips | off |
+| `--color WHEN` | `auto`, `always`, or `never` | `auto` |
+| `-- COMMAND` | Run COMMAND and format its merged stdout/stderr; exit code is propagated | — |
+| `--version` / `-h` | Version / help | — |
+
+Flag defaults can be changed in the [config file](#configuration); CLI
+arguments always win.
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| [`NO_COLOR`](https://no-color.org) | Non-empty value disables ANSI colors (override with `--color always`) |
+| `CLOGS_CONFIG` | Path to the config file (default: `~/.config/clogs.toml`) |
+| `COLORTERM` | `truecolor`/`24bit` enables the 24-bit palette; otherwise 256-color codes |
+| `COLUMNS` | Overrides the detected terminal width for message wrapping |
+
+> **Note:** When piping, only stdout reaches `clogs` — either merge streams
+> (`my-command 2>&1 | clogs`) or let clogs run the command for you
+> (`clogs -- my-command`), which captures both in order.
 
 Colors are disabled automatically when output isn't a terminal (e.g.
-`clogs > file.log`). `clogs` also respects [`NO_COLOR`](https://no-color.org) -
-set the env var to a non-empty value to disable all ANSI codes. Override
-either with `--color always`. `python -m clogs` works too.
+`clogs > file.log`). `python -m clogs` works too.
 
 ## How it works
 
@@ -124,10 +156,14 @@ once, then hidden until they change. This is the main noise reduction.
 Use `-v` to disable suppression and see everything.
 
 **Startup noise** - non-JSON lines before the first log record (framework
-banners, config output) are grouped under a `─── startup ───` header.
+banners, config output) are closed off with a `─── ↑ startup ───` rule.
 
-**Return values** - Lambda return values (multi-line JSON at the end of
-output) are formatted as a `─── return ───` block with color-coded
+**Invocations** - a `START` line, or a change in `request_id`, emits a
+`─── invocation <id> ───` divider; `REPORT` lines become a duration/memory
+summary block and `END` lines are suppressed.
+
+**Return values** - Lambda return values (single- or multi-line JSON at the
+end of output) are formatted as a `─── return ───` block with color-coded
 `statusCode` (green for 2xx, yellow for 4xx, red for 5xx).
 
 ## Supported formats
@@ -184,8 +220,11 @@ Defaults for everything live in [`clogs/config.py`](clogs/config.py).
 ## Development
 
 ```bash
-uv run pytest
+uv run pytest        # tests
+uvx ruff check .     # lint
 ```
+
+CI runs both on Python 3.9–3.13 for every pull request.
 
 ## License
 
