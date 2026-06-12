@@ -44,20 +44,25 @@ Powertools / Lambda JSON and get colorized, readable output.
 
 ## Install
 
-Requires **Python 3.9+**. Install from source with [uv](https://docs.astral.sh/uv/):
+Requires **Python 3.9+**. Install straight from GitHub with
+[uv](https://docs.astral.sh/uv/) (no clone needed):
 
 ```bash
-git clone https://github.com/JasonSatti/clogs.git
-cd clogs
-uv tool install .
+uv tool install git+https://github.com/JasonSatti/clogs.git
 ```
 
 Or with pip:
 
 ```bash
+pip install git+https://github.com/JasonSatti/clogs.git
+```
+
+Or from a local checkout:
+
+```bash
 git clone https://github.com/JasonSatti/clogs.git
 cd clogs
-pip install .
+uv tool install .
 ```
 
 ## Usage
