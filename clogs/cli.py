@@ -140,8 +140,6 @@ def run(
 
     try:
         for line in stdin:
-            stripped = line.strip()
-
             if ctx.buffering_json:
                 # Keep indentation so a non-JSON fallback prints faithfully.
                 if ctx.append_json_line(line.rstrip()):
@@ -236,6 +234,7 @@ def run(
 def main() -> None:
     """Run the CLI."""
     parser = argparse.ArgumentParser(
+        prog="clogs",
         description="Colorized, condensed log formatting for Lambda and Python logs",
     )
     parser.add_argument(

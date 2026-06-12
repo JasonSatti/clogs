@@ -1,5 +1,4 @@
 """Tests for formatting functions."""
-import json
 import re
 
 import pytest
@@ -294,7 +293,7 @@ class TestReturnValue:
 
     def test_header_and_footer_same_width(self):
         result = _strip_ansi(format_return_value({"statusCode": 200}))
-        lines = [l for l in result.split("\n") if l]
+        lines = [ln for ln in result.split("\n") if ln]
         assert len(lines[0]) == len(lines[-1])
 
 

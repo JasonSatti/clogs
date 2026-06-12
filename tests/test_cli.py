@@ -381,7 +381,7 @@ class TestLevelRendering:
         output = _strip_ansi(_run_clogs("\n".join(lines), context_size=0))
         assert "CRIT " in output
         assert "CRITICAL" not in output
-        crit_line, error_line = [l for l in output.split("\n") if "│" in l]
+        crit_line, error_line = [ln for ln in output.split("\n") if "│" in ln]
         assert crit_line.index("│") == error_line.index("│")
 
 
