@@ -120,16 +120,21 @@ class TestBadges:
         yield
         set_badges(False)
 
-    def test_chips_uniform_width_with_common_levels_centered(self):
-        result = _strip_ansi(format_level("INFO"))
-        assert result == "  INFO  "  # 4-letter levels center perfectly
-        result = _strip_ansi(format_level("ERROR"))
-        assert result == " ERROR  "  # 5-letter levels carry the half offset
+    def test_chips_uniform_width_and_perfectly_centered(self):
+        # 3-letter labels: every chip identical, text dead-center
+        assert _strip_ansi(format_level("INFO")) == " INF "
+        assert _strip_ansi(format_level("ERROR")) == " ERR "
+        assert _strip_ansi(format_level("WARNING")) == " WRN "
+        assert _strip_ansi(format_level("DEBUG")) == " DBG "
+        assert _strip_ansi(format_level("CRITICAL")) == " CRT "
+
+    def test_unknown_level_truncated_to_three_letters(self):
+        assert _strip_ansi(format_level("NOTICE")) == " NOT "
 
     def test_chip_uses_badge_color(self):
         result = format_level("WARNING")
         assert BADGE_COLORS["warning"] in result
-        assert " WARN " in result
+        assert " WRN " in result
 
     def test_all_cells_same_width(self):
         widths = {
@@ -158,7 +163,7 @@ class TestBadges:
     def test_no_color_renders_plain_chip(self):
         set_color_enabled(False)
         result = format_level("INFO")
-        assert result == "  INFO  "
+        assert result == " INF "
         assert "\033[" not in result
 
 
