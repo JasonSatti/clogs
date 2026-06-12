@@ -50,13 +50,13 @@ class ParsedLine:
 # Lambda runtime format. Real CloudWatch / runtime output is tab-separated
 # without a thread segment; `sls invoke local` adds `[Thread - name]`.
 _LAMBDA_RE = re.compile(
-    r"^\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+"
+    r"^\[(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\]\s+"
     r"(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+"
     r"\S+\s+"  # request ID
     r"(?:\[Thread\s*-\s*([^\]]+)\]\s+)?(.*)"
 )
 
-_STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):(\S+):(.*)")
+_STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL):(\S+):(.*)")
 
 # Python warnings format: /path/to/file.py:42: DeprecationWarning: message
 _WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")
@@ -66,9 +66,10 @@ _WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")
 _DDTRACE_PREFIX_RE = re.compile(r'^\{\s*"traces"\s*:')
 
 # `aws logs tail` prefixes every event with its own ISO timestamp. Strip it
-# so the wrapped payload (Powertools JSON, runtime lines) still classifies.
+# so the wrapped payload (Powertools JSON, runtime lines) still classifies;
+# the captured timestamp backfills inner formats that carry none (stdlib).
 _LOG_TAIL_PREFIX_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+(.+)$"
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.+)$"
 )
 
 _DDTRACE_BANNER = "Configured ddtrace instrumentation"
@@ -102,8 +103,12 @@ def parse_line(line: str) -> ParsedLine:
     if parsed.line_type is LineType.PASSTHROUGH:
         m = _LOG_TAIL_PREFIX_RE.match(raw.strip())
         if m:
-            inner = _classify(m.group(1))
+            inner = _classify(m.group(2))
             if inner.line_type is not LineType.PASSTHROUGH:
+                # Formats without their own timestamp (stdlib) inherit the
+                # event timestamp so the column isn't lost.
+                if not inner.timestamp and inner.line_type is LineType.PYTHON_STDLIB:
+                    inner.timestamp = m.group(1)
                 return inner
 
     return parsed

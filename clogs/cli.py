@@ -104,7 +104,9 @@ def _format_parsed(parsed: ParsedLine, ctx: ContextTracker) -> str | None:
     if lt is LineType.PYTHON_STDLIB:
         if not _passes(ctx, parsed.level, f"{parsed.message} {parsed.location}"):
             return None
-        return format_stdlib_line(parsed.level, parsed.location, parsed.message)
+        return format_stdlib_line(
+            parsed.level, parsed.location, parsed.message, parsed.timestamp
+        )
     if lt is LineType.TRACEBACK_START:
         ctx.in_traceback = True
         if not _passes(ctx, None, parsed.message):
@@ -210,7 +212,12 @@ def run(
     grep: "str | re.Pattern | None" = None,
     delta: bool = False,
 ) -> None:
-    """Format logs from stdin to stdout."""
+    """Format logs from stdin to stdout.
+
+    Note: color and badge styling are process-global formatter state
+    (see set_color_enabled / set_badges); adaptive layout state is reset
+    per call. The CLI configures styling before calling this.
+    """
     kwargs: dict[str, bool | int] = {"verbose": verbose}
     if context_size is not None:
         kwargs["context_size"] = context_size

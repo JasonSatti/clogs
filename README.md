@@ -156,7 +156,8 @@ once, then hidden until they change. This is the main noise reduction.
 Use `-v` to disable suppression and see everything.
 
 **Startup noise** - non-JSON lines before the first log record (framework
-banners, config output) are closed off with a `─── ↑ startup ───` rule.
+banners, config output) stream immediately and are closed off with a
+`─── ↑ startup ───` rule — the arrow points at the section it labels.
 
 **Invocations** - a `START` line, or a change in `request_id`, emits a
 `─── invocation <id> ───` divider; `REPORT` lines become a duration/memory

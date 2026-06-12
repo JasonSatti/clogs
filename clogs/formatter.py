@@ -137,9 +137,13 @@ def _terminal_width() -> int:
 
 _LEVEL_DISPLAY = {"WARNING": "WARN", "CRITICAL": "CRIT"}
 
+# Common shorthand levels emitted by non-Python loggers
+_LEVEL_ALIASES = {"warn": "warning", "crit": "critical", "fatal": "critical"}
+
 
 def _level_color_key(level: str) -> str:
     key = level.lower()
+    key = _LEVEL_ALIASES.get(key, key)
     return key if key in COLORS else "info"
 
 
@@ -518,13 +522,13 @@ def format_runtime_line(level: str, timestamp: str, location: str, message: str)
     return " ".join(p for p in parts if p)
 
 
-def format_stdlib_line(level: str, location: str, message: str) -> str:
+def format_stdlib_line(level: str, location: str, message: str, timestamp: str = "") -> str:
     level_key = _level_color_key(level)
     observe_location(location)
     parts = [
         _bar(level_key),
-        _timestamp_column(""),
-        _delta_column(""),
+        _timestamp_column(timestamp),
+        _delta_column(timestamp),
         format_level(level),
         format_location(location) if _loc_width else "",
         colorize("│", "separator"),

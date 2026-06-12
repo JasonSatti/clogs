@@ -142,6 +142,21 @@ class TestLogTailPrefix:
         parsed = parse_line(line)
         assert parsed.line_type == LineType.LAMBDA_RUNTIME
 
+    def test_prefixed_stdlib_inherits_event_timestamp(self):
+        """stdlib logs carry no timestamp — the tail event timestamp fills in."""
+        parsed = parse_line("2026-03-14T13:35:29.236Z INFO:my_logger:hello")
+        assert parsed.line_type == LineType.PYTHON_STDLIB
+        assert parsed.timestamp == "2026-03-14T13:35:29.236Z"
+        assert parsed.message == "hello"
+
+    def test_prefixed_runtime_keeps_own_timestamp(self):
+        line = (
+            "2026-03-14T13:36:00Z "
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] started"
+        )
+        parsed = parse_line(line)
+        assert parsed.timestamp == "2026-03-14T13:35:29.236Z"
+
     def test_prefixed_plain_text_stays_passthrough(self):
         parsed = parse_line("2026-03-14T13:35:29Z something unstructured")
         assert parsed.line_type == LineType.PASSTHROUGH
