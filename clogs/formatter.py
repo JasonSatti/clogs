@@ -15,6 +15,7 @@ from clogs.config import (
     BLOCK_WIDTH,
     COLORS,
     KNOWN_FIELDS,
+    LEVEL_ALIASES,
     LEVEL_WIDTH,
     RESET,
     TIMESTAMP_WIDTH,
@@ -137,22 +138,17 @@ def _terminal_width() -> int:
 
 _LEVEL_DISPLAY = {"WARNING": "WARN", "CRITICAL": "CRIT"}
 
-# Common shorthand levels emitted by non-Python loggers
-_LEVEL_ALIASES = {"warn": "warning", "crit": "critical", "fatal": "critical"}
+_MESSAGE_COLORS = {
+    "error": "message_error",
+    "critical": "message_error",
+    "warning": "message_warning",
+}
 
 
 def _level_color_key(level: str) -> str:
     key = level.lower()
-    key = _LEVEL_ALIASES.get(key, key)
+    key = LEVEL_ALIASES.get(key, key)
     return key if key in COLORS else "info"
-
-
-def _message_color_key(level_key: str) -> str:
-    if level_key in ("error", "critical"):
-        return "message_error"
-    if level_key == "warning":
-        return "message_warning"
-    return "message"
 
 
 def _bar(level_key: str) -> str:
@@ -256,7 +252,7 @@ def format_message(msg: object, level_key: str = "info") -> str:
 
 
 def _wrap_message(msg_text: str, level_key: str = "info") -> str:
-    msg_color = _message_color_key(level_key)
+    msg_color = _MESSAGE_COLORS.get(level_key, "message")
     term_width = _terminal_width()
     available = term_width - _msg_col()
     if available < 20 or len(msg_text) <= available:
@@ -302,10 +298,6 @@ def _highlight(text: str) -> str:
     return _grep.sub(lambda m: f"\033[7m{m.group(0)}\033[27m", text)
 
 
-def format_tag(k: str, v: object) -> str:
-    return colorize(_highlight(f"{k}={v}"), "tag")
-
-
 def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
     """Render tags inline under the message, wrapping at tag boundaries.
 
@@ -335,18 +327,14 @@ def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
     return out
 
 
-def _block_header(title: str) -> str:
+def format_section_header(title: str) -> str:
     bar = colorize("─" * 3, "separator")
     trail = colorize("─" * (BLOCK_WIDTH - len(title) - 5), "separator")
     return f"{bar} {colorize(title, 'block_header')} {trail}"
 
 
-def format_section_header(title: str) -> str:
-    return _block_header(title)
-
-
 def format_block(title: str, data: dict) -> str:
-    lines = [_block_header(title)]
+    lines = [format_section_header(title)]
     max_key = max(len(k) for k in data) if data else 0
     for k, v in data.items():
         padded = f"  {k}:".ljust(max_key + 4)  # 2 indent + key + colon + padding
@@ -397,7 +385,7 @@ def _render_body(body: object, key_prefix: str, lines: list[str]) -> None:
 
 
 def format_return_value(obj: dict) -> str:
-    lines = ["\n" + _block_header("return")]
+    lines = ["\n" + format_section_header("return")]
     max_key = max(len(k) for k in obj) if obj else 0
     for k, v in obj.items():
         padded = f"  {k}:".ljust(max_key + 4)
@@ -504,25 +492,7 @@ def format_warning(msg: str) -> str:
     return colorize(f"  ⚠ {msg}", "non_json")
 
 
-def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
-    # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
-    # `MainThread`. Both are noise — hide them, keep other thread names.
-    level_key = _level_color_key(level)
-    display_loc = "" if location in ("main", "MainThread") else location
-    observe_location(display_loc)
-    parts = [
-        _bar(level_key),
-        _timestamp_column(timestamp),
-        _delta_column(timestamp),
-        format_level(level),
-        format_location(display_loc) if _loc_width else "",
-        colorize("│", "separator"),
-        _wrap_message(message, level_key),
-    ]
-    return " ".join(p for p in parts if p)
-
-
-def format_stdlib_line(level: str, location: str, message: str, timestamp: str = "") -> str:
+def _format_plain_line(level: str, timestamp: str, location: str, message: str) -> str:
     level_key = _level_color_key(level)
     observe_location(location)
     parts = [
@@ -535,3 +505,14 @@ def format_stdlib_line(level: str, location: str, message: str, timestamp: str =
         _wrap_message(message, level_key),
     ]
     return " ".join(p for p in parts if p)
+
+
+def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
+    # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
+    # `MainThread`. Both are noise — hide them, keep other thread names.
+    display_loc = "" if location in ("main", "MainThread") else location
+    return _format_plain_line(level, timestamp, display_loc, message)
+
+
+def format_stdlib_line(level: str, location: str, message: str, timestamp: str = "") -> str:
+    return _format_plain_line(level, timestamp, location, message)

@@ -147,9 +147,12 @@ def apply(data: dict) -> dict:
     if isinstance(section, dict):
         for key, value in section.items():
             expected = _VALID_DEFAULTS.get(key)
-            valid = expected is not None and isinstance(value, expected)
-            if expected is int and isinstance(value, bool):
-                valid = False
+            valid = (
+                expected is not None
+                and isinstance(value, expected)
+                # bool is an int subclass — `context = true` must not pass
+                and not (expected is int and isinstance(value, bool))
+            )
             if not valid:
                 print(f"clogs: ignoring invalid default {key!r}", file=sys.stderr)
                 continue

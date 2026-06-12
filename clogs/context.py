@@ -105,9 +105,15 @@ class ContextTracker:
         """Buffer a formatted non-JSON line so it emits in source order."""
         self.pending_output.append(line)
 
-    def add_multiline(self, buf: list[str]) -> None:
-        """Buffer a completed multi-line JSON blob for ordered flushing."""
-        self.pending_output.append(buf)
+    def stash_blob(self, buf: list[str]) -> None:
+        """Route a completed JSON blob. During the context window it queues
+        in source order so the flush decides return-vs-generic rendering;
+        otherwise it occupies the single held slot so a terminal blob can
+        still render as a return block at EOF."""
+        if self.buffering_records and self.has_records():
+            self.pending_output.append(buf)
+        else:
+            self.held_multiline = buf
 
     def has_records(self) -> bool:
         return any(isinstance(item, dict) for item in self.pending_output)

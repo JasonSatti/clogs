@@ -12,12 +12,17 @@ def _supports_truecolor() -> bool:
 _TRUECOLOR = _supports_truecolor()
 
 
+def _parse_hex(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+
+
 def _fg(hex_color: str, fallback: int, *, bold: bool = False) -> str:
     """Build an ANSI foreground code: 24-bit when the terminal supports it,
     256-color otherwise. ``fallback`` is the 256-palette index."""
     prefix = "1;" if bold else ""
     if _TRUECOLOR:
-        r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+        r, g, b = _parse_hex(hex_color)
         return f"\033[{prefix}38;2;{r};{g};{b}m"
     return f"\033[{prefix}38;5;{fallback}m"
 
@@ -67,11 +72,6 @@ def _rgb_to_idx(r: int, g: int, b: int) -> int:
     return cube_idx if dist(cube_rgb) <= dist((grey_v, grey_v, grey_v)) else grey_idx
 
 
-def _parse_hex(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
-
-
 def color_code(spec: "str | int", *, bold: bool = False) -> str:
     """Build an ANSI code from a user color spec: '#RRGGBB' or 256 index."""
     if isinstance(spec, int):
@@ -93,7 +93,7 @@ def badge_code(spec: "str | int") -> str:
 def _badge(hex_color: str, fallback: int) -> str:
     """Filled-badge code: dark text on a level-colored background."""
     if _TRUECOLOR:
-        r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+        r, g, b = _parse_hex(hex_color)
         return f"\033[1;38;2;22;24;29;48;2;{r};{g};{b}m"
     return f"\033[1;38;5;235;48;5;{fallback}m"
 
@@ -112,6 +112,10 @@ LEVEL_PALETTE = {
 
 # Filled level chips for --badges mode (Datadog status-chip style)
 BADGE_COLORS = {k: _badge(h, f) for k, (h, f) in LEVEL_PALETTE.items()}
+
+# Shorthand level names emitted by non-Python loggers, used for both
+# color mapping and --level filtering.
+LEVEL_ALIASES = {"warn": "warning", "crit": "critical", "fatal": "critical"}
 
 # Set any value to "" to disable coloring for that element.
 COLORS = {

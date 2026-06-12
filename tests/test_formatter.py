@@ -1,6 +1,4 @@
 """Tests for formatting functions."""
-import re
-
 import pytest
 
 from clogs.config import BADGE_COLORS, COLORS
@@ -20,10 +18,7 @@ from clogs.formatter import (
     set_delta,
     set_grep,
 )
-
-
-def _strip_ansi(text: str) -> str:
-    return re.sub(r"\033\[[0-9;]*m", "", text)
+from tests.helpers import strip_ansi as _strip_ansi
 
 
 @pytest.fixture(autouse=True)

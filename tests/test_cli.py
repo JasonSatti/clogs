@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
-import re
 from io import StringIO
 
 from clogs.cli import run
+from tests.helpers import strip_ansi as _strip_ansi
 
 
 def _run_clogs(
@@ -29,10 +29,6 @@ def _run_clogs(
         delta=delta,
     )
     return stdout.getvalue()
-
-
-def _strip_ansi(text: str) -> str:
-    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _make_json_line(**fields) -> str:

@@ -10,6 +10,7 @@ import sys
 from typing import TextIO
 
 from clogs import __version__, settings
+from clogs.config import LEVEL_ALIASES
 from clogs.context import ContextTracker
 from clogs.formatter import (
     colorize,
@@ -35,16 +36,14 @@ _LEVEL_RANKS = {
     "debug": 10,
     "info": 20,
     "warning": 30,
-    "warn": 30,
     "error": 40,
     "critical": 50,
-    "crit": 50,
-    "fatal": 50,
 }
 
 
 def _level_rank(level: str) -> int:
-    return _LEVEL_RANKS.get(level.lower(), 20)
+    key = level.lower()
+    return _LEVEL_RANKS.get(LEVEL_ALIASES.get(key, key), 20)
 
 
 def _passes(ctx: ContextTracker, level: str | None, haystack: str) -> bool:
@@ -245,16 +244,7 @@ def run(
             if ctx.buffering_json:
                 # Keep indentation so a non-JSON fallback prints faithfully.
                 if ctx.append_json_line(line.rstrip()):
-                    buf = ctx.take_json_buffer()
-                    if ctx.buffering_records and ctx.has_records():
-                        # Inside the context window, after the first record.
-                        # Queue in source order so flush can decide rendering.
-                        ctx.add_multiline(buf)
-                    else:
-                        # Pre-record phase, verbose, or --context 0 — hold
-                        # for one slot so a terminal invoke-return dict can
-                        # still render as a return block at EOF.
-                        ctx.held_multiline = buf
+                    ctx.stash_blob(ctx.take_json_buffer())
                 continue
 
             parsed = parse_line(line)
@@ -274,14 +264,10 @@ def run(
                 continue
 
             # A complete single-line JSON object with no message field —
-            # possibly an invoke return value. Route it through the same
-            # held/pending machinery as multi-line blobs so a terminal one
-            # renders as a return block at EOF.
+            # possibly an invoke return value. Same routing as multi-line
+            # blobs so a terminal one renders as a return block at EOF.
             if parsed.line_type is LineType.JSON_OBJECT:
-                if ctx.buffering_records and ctx.has_records():
-                    ctx.add_multiline([parsed.message])
-                else:
-                    ctx.held_multiline = [parsed.message]
+                ctx.stash_blob([parsed.message])
                 continue
 
             # Buffering phase: collect JSON records for context detection
@@ -409,10 +395,12 @@ def main() -> None:
 
     if args.context is not None and args.context < 0:
         parser.error("--context must be >= 0")
-    if args.level is not None and args.level.lower() not in _LEVEL_RANKS:
-        parser.error(
-            f"invalid level {args.level!r} (choose from: debug, info, warning, error, critical)"
-        )
+    if args.level is not None:
+        key = args.level.lower()
+        if LEVEL_ALIASES.get(key, key) not in _LEVEL_RANKS:
+            parser.error(
+                f"invalid level {args.level!r} (choose from: debug, info, warning, error, critical)"
+            )
     grep = None
     if args.grep is not None:
         try:
@@ -432,6 +420,8 @@ def main() -> None:
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
+    proc = None
+    source = sys.stdin
     if command:
         try:
             proc = subprocess.Popen(
@@ -444,19 +434,10 @@ def main() -> None:
         except FileNotFoundError:
             parser.error(f"command not found: {command[0]}")
         assert proc.stdout is not None
-        run(
-            proc.stdout,
-            sys.stdout,
-            verbose=args.verbose,
-            context_size=args.context,
-            min_level=args.level,
-            grep=grep,
-            delta=args.delta,
-        )
-        sys.exit(proc.wait())
+        source = proc.stdout
 
     run(
-        sys.stdin,
+        source,
         sys.stdout,
         verbose=args.verbose,
         context_size=args.context,
@@ -464,6 +445,8 @@ def main() -> None:
         grep=grep,
         delta=args.delta,
     )
+    if proc is not None:
+        sys.exit(proc.wait())
 
 
 if __name__ == "__main__":
