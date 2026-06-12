@@ -7,8 +7,13 @@ Powertools / Lambda JSON and get colorized, readable output.
 - Detects stable fields (like `service`, `request_id`) and shows them once
   in a context block - not on every line
 - Hides repeated metadata until values actually change
-- Formats each log line as `timestamp LEVEL location │ message`
-- Colors levels, timestamps, and tags so you can scan quickly
+- Formats each log line as `▎ timestamp LEVEL location │ message`, with a
+  status-colored edge bar on every row (like Datadog's Log Explorer)
+- Columns size themselves to the content: the location column grows only as
+  wide as the longest location seen, and the timestamp column disappears
+  for streams that don't have timestamps
+- Datadog-inspired palette - true 24-bit color when the terminal supports
+  it (`COLORTERM=truecolor`), 256-color fallback otherwise
 - No dependencies, just the Python standard library
 
 `cat examples/example.log | clogs`
@@ -67,13 +72,19 @@ clogs -c 10
 
 # Disable the context block entirely
 clogs --context 0
+
+# Force colors on/off (default: auto — on for terminals, off when piped)
+clogs --color always
+clogs --color never
 ```
 
 > **Note:** When piping, only stdout reaches `clogs`. If your tool writes logs
 > to stderr, merge streams first: `my-command 2>&1 | clogs`
 
-`clogs` respects [`NO_COLOR`](https://no-color.org) - set the env var (any
-value) to disable all ANSI codes.
+Colors are disabled automatically when output isn't a terminal (e.g.
+`clogs > file.log`). `clogs` also respects [`NO_COLOR`](https://no-color.org) -
+set the env var to a non-empty value to disable all ANSI codes. Override
+either with `--color always`. `python -m clogs` works too.
 
 ## How it works
 
@@ -97,9 +108,12 @@ output) are formatted as a `─── return ───` block with color-coded
 | Format | Example |
 |---|---|
 | Powertools JSON | `{"level": "INFO", "location": "handler", "message": "hello", ...}` |
-| Lambda runtime | `[INFO] 2026-03-14T13:35:29.236Z reqId [Thread - main] message` |
+| Lambda runtime | `[INFO] 2026-03-14T13:35:29.236Z reqId message` (with or without `[Thread - name]`) |
 | Python stdlib | `INFO:my_logger:message` |
+| `aws logs tail` | Any of the above wrapped in the event's ISO timestamp prefix |
 
+Single- or multi-line JSON objects without a `message` field (e.g. invoke
+return values) are captured; the final one renders as the `return` block.
 Other lines are passed through dimmed.
 
 ## Modes
@@ -116,8 +130,8 @@ Edit [`clogs/config.py`](clogs/config.py) directly:
 
 | Setting | What it controls |
 |---|---|
-| `COLORS` | 256-color ANSI codes for every element |
-| `LOCATION_WIDTH` | Column width for location field (default: 22) |
+| `COLORS` | ANSI codes for every element (truecolor hex + 256-color fallback) |
+| `LOCATION_WIDTH` | Maximum width of the adaptive location column (default: 22) |
 | `CONTEXT_BUFFER_SIZE` | Records to buffer for context detection (default: 5) |
 | `PREFERRED_CONTEXT_FIELDS` | Fields eligible for context block with relaxed rules |
 

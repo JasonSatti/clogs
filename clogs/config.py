@@ -1,38 +1,73 @@
 """Colors, field sets, and layout constants."""
 from __future__ import annotations
 
-# 256-color ANSI codes. Reference: https://256colors.com
+import os
+
+
+def _supports_truecolor() -> bool:
+    colorterm = os.environ.get("COLORTERM", "").lower()
+    return "truecolor" in colorterm or "24bit" in colorterm
+
+
+_TRUECOLOR = _supports_truecolor()
+
+
+def _fg(hex_color: str, fallback: int, *, bold: bool = False) -> str:
+    """Build an ANSI foreground code: 24-bit when the terminal supports it,
+    256-color otherwise. ``fallback`` is the 256-palette index."""
+    prefix = "1;" if bold else ""
+    if _TRUECOLOR:
+        r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+        return f"\033[{prefix}38;2;{r};{g};{b}m"
+    return f"\033[{prefix}38;5;{fallback}m"
+
+
+# Datadog-inspired palette. Truecolor hex values approximate the Log Explorer
+# status colors and brand purple; the second argument is the 256-color
+# fallback used when COLORTERM doesn't advertise truecolor.
 # Set any value to "" to disable coloring for that element.
 COLORS = {
-    # Log levels
-    "info": "\033[1;38;5;117m",
-    "warning": "\033[1;38;5;214m",
-    "error": "\033[1;38;5;9m",
-    "debug": "\033[1;38;5;248m",
-    "ok": "\033[1;38;5;78m",
+    # Log levels (also used for the left status bar)
+    "info": _fg("#3D7FE0", 33, bold=True),
+    "warning": _fg("#FFAC2E", 214, bold=True),
+    "error": _fg("#EB4D58", 9, bold=True),
+    "critical": _fg("#FF6B7A", 196, bold=True),
+    "debug": _fg("#8C939E", 248, bold=True),
+    "ok": _fg("#53B06A", 78, bold=True),
     # Log content
-    "message": "\033[0;37m",
-    "location": "\033[38;5;245m",
-    "timestamp": "\033[38;5;240m",
-    "tag": "\033[38;5;134m",
-    "non_json": "\033[38;5;250m",
-    "passthrough": "\033[38;5;240m",
+    "message": _fg("#D6D9DE", 252),
+    "message_warning": _fg("#F2CE8B", 222),
+    "message_error": _fg("#F2A8B0", 217),
+    "location": _fg("#8A919C", 245),
+    "timestamp": _fg("#646B76", 240),
+    "tag": _fg("#B48EE8", 140),
+    "non_json": _fg("#B6BBC2", 250),
+    "passthrough": _fg("#646B76", 240),
     # Structural
-    "separator": "\033[38;5;240m",
+    "separator": _fg("#646B76", 240),
     # Blocks (context header, return value)
-    "block_header": "\033[1;38;5;250m",
-    "block_key": "\033[38;5;245m",
-    "block_value": "\033[38;5;252m",
+    "block_header": _fg("#C8CCD2", 250, bold=True),
+    "block_key": _fg("#8A919C", 245),
+    "block_value": _fg("#D6D9DE", 252),
 }
 
 RESET = "\033[0m"
 
 TIMESTAMP_WIDTH = 8
 LEVEL_WIDTH = 5
+
+# Maximum width of the location column. The column sizes itself to the
+# longest location actually seen (see formatter.observe_location) and this
+# is the cap beyond which locations are truncated.
 LOCATION_WIDTH = 22
 
-# Column where the message starts.
-MSG_COL = TIMESTAMP_WIDTH + 1 + LEVEL_WIDTH + 1 + LOCATION_WIDTH + 1 + 1 + 1
+# Status bar drawn at the left edge of every log row, colored by level —
+# mirrors the row border in Datadog's Log Explorer.
+BAR_GLYPH = "▎"
+BAR_WIDTH = 2  # glyph + trailing space
+
+# Total width of block rules (context, return, startup headers)
+BLOCK_WIDTH = 70
 
 # Fields rendered in the fixed-column layout (not shown as tags)
 KNOWN_FIELDS = {"level", "location", "message", "timestamp"}

@@ -3,12 +3,85 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
-from clogs.config import COLORS, KNOWN_FIELDS, LEVEL_WIDTH, LOCATION_WIDTH, MSG_COL, RESET, TIMESTAMP_WIDTH
+from clogs.config import (
+    BAR_GLYPH,
+    BAR_WIDTH,
+    BLOCK_WIDTH,
+    COLORS,
+    KNOWN_FIELDS,
+    LEVEL_WIDTH,
+    LOCATION_WIDTH,
+    RESET,
+    TIMESTAMP_WIDTH,
+)
+
+# None = decide from NO_COLOR alone (library / test usage). The CLI sets an
+# explicit value from --color and isatty().
+_color_override: bool | None = None
+
+# Adaptive layout state. The location column sizes itself to the longest
+# location seen so far (capped at LOCATION_WIDTH) and the timestamp column
+# only exists once a timestamped line has been seen — so streams without
+# timestamps or with short locations don't pay for fixed-width dead space.
+_loc_width = 0
+_ts_seen = False
+
+
+def set_color_enabled(enabled: bool | None) -> None:
+    global _color_override
+    _color_override = enabled
+
+
+def _color_enabled() -> bool:
+    if _color_override is not None:
+        return _color_override
+    # no-color.org: presence of a non-empty NO_COLOR disables color.
+    return not os.environ.get("NO_COLOR")
+
+
+def reset_layout() -> None:
+    global _loc_width, _ts_seen
+    _loc_width = 0
+    _ts_seen = False
+
+
+def observe_location(loc: str) -> None:
+    global _loc_width
+    if len(loc) > _loc_width:
+        _loc_width = min(len(loc), LOCATION_WIDTH)
+
+
+def observe_timestamp() -> None:
+    global _ts_seen
+    _ts_seen = True
+
+
+def observe_record(record: dict) -> None:
+    """Register a JSON record's layout-relevant fields before rendering."""
+    if "timestamp" in record:
+        observe_timestamp()
+    if "location" in record:
+        observe_location(str(record["location"]))
+
+
+def _sep_col() -> int:
+    """Column of the `│` separator under the current adaptive layout."""
+    col = BAR_WIDTH + LEVEL_WIDTH + 1
+    if _ts_seen:
+        col += TIMESTAMP_WIDTH + 1
+    if _loc_width:
+        col += _loc_width + 1
+    return col
+
+
+def _msg_col() -> int:
+    return _sep_col() + 2
 
 
 def colorize(text: str, color_key: str) -> str:
-    if "NO_COLOR" in os.environ:
+    if not _color_enabled():
         return text
     code = COLORS.get(color_key, "")
     if not code:
@@ -17,47 +90,79 @@ def colorize(text: str, color_key: str) -> str:
 
 
 def _terminal_width() -> int:
-    try:
-        return os.get_terminal_size().columns
-    except OSError:
-        return 120
+    # shutil honors the COLUMNS env var and never raises when piped.
+    return shutil.get_terminal_size(fallback=(120, 24)).columns
+
+
+_LEVEL_DISPLAY = {"WARNING": "WARN", "CRITICAL": "CRIT"}
+
+
+def _level_color_key(level: str) -> str:
+    key = level.lower()
+    return key if key in COLORS else "info"
+
+
+def _message_color_key(level_key: str) -> str:
+    if level_key in ("error", "critical"):
+        return "message_error"
+    if level_key == "warning":
+        return "message_warning"
+    return "message"
+
+
+def _bar(level_key: str) -> str:
+    """Status bar at the left edge of a log row, colored by level."""
+    return colorize(BAR_GLYPH, level_key)
+
+
+def _cont_prefix(level_key: str) -> str:
+    """Prefix for continuation lines (wrapped messages, tags): the status
+    bar plus the gutter rule, so a multi-line record reads as one row."""
+    return (
+        colorize(BAR_GLYPH, level_key)
+        + " " * (_sep_col() - 1)
+        + colorize("│", "separator")
+        + " "
+    )
 
 
 def format_level(level: str) -> str:
-    color_key = level.lower()
-    level_upper = color_key.upper()
-    if color_key not in COLORS:
-        color_key = "info"
-    display = "WARN" if level_upper == "WARNING" else level_upper
+    color_key = _level_color_key(level)
+    level_upper = level.upper()
+    display = _LEVEL_DISPLAY.get(level_upper, level_upper)[:LEVEL_WIDTH]
     return colorize(display.ljust(LEVEL_WIDTH), color_key)
 
 
 def format_timestamp(ts: str) -> str:
     """Extract HH:MM:SS from an ISO timestamp (handles both T and space separators)."""
     if len(ts) >= 19 and ts[10] in ("T", " "):
-        return colorize(ts[11:19], "timestamp")
-    return colorize(ts[:8] if len(ts) >= 8 else ts, "timestamp")
+        display = ts[11:19]
+    else:
+        display = ts[:8]
+    return colorize(display.ljust(TIMESTAMP_WIDTH), "timestamp")
 
 
 def format_location(loc: str) -> str:
-    if len(loc) > LOCATION_WIDTH:
-        display = loc[: LOCATION_WIDTH - 1] + "…"
+    observe_location(loc)
+    if len(loc) > _loc_width:
+        display = loc[: _loc_width - 1] + "…"
     else:
-        display = loc.ljust(LOCATION_WIDTH)
+        display = loc.ljust(_loc_width)
     return colorize(display, "location")
 
 
-def format_message(msg: object) -> str:
-    if isinstance(msg, str):
-        return _wrap_message(msg)
-    return _wrap_message(json.dumps(msg, separators=(", ", ": ")))
+def format_message(msg: object, level_key: str = "info") -> str:
+    if not isinstance(msg, str):
+        msg = json.dumps(msg, separators=(", ", ": "))
+    return _wrap_message(msg, level_key)
 
 
-def _wrap_message(msg_text: str) -> str:
+def _wrap_message(msg_text: str, level_key: str = "info") -> str:
+    msg_color = _message_color_key(level_key)
     term_width = _terminal_width()
-    available = term_width - MSG_COL
+    available = term_width - _msg_col()
     if available < 20 or len(msg_text) <= available:
-        return colorize(msg_text, "message")
+        return colorize(msg_text, msg_color)
 
     words = msg_text.split(" ")
     lines: list[str] = []
@@ -85,10 +190,10 @@ def _wrap_message(msg_text: str) -> str:
     if current:
         lines.append(current)
 
-    indent = " " * MSG_COL
-    colored = [colorize(lines[0], "message")]
+    cont = _cont_prefix(level_key)
+    colored = [colorize(lines[0], msg_color)]
     for line in lines[1:]:
-        colored.append(indent + colorize(line, "message"))
+        colored.append(cont + colorize(line, msg_color))
     return "\n".join(colored)
 
 
@@ -96,18 +201,54 @@ def format_tag(k: str, v: object) -> str:
     return colorize(f"{k}={v}", "tag")
 
 
-def format_block(title: str, data: dict) -> str:
+def _format_tags(tag_dict: dict[str, object], level_key: str) -> list[str]:
+    """Render tags inline under the message, wrapping at tag boundaries.
+
+    The first line carries the `↳` marker; every line repeats the status bar
+    and gutter rule so the record reads as one visual row.
+    """
+    cont = _cont_prefix(level_key)
+    available = max(_terminal_width() - _msg_col() - 2, 20)  # 2 = "↳ "
+
+    rows: list[list[str]] = [[]]
+    width = 0
+    for k, v in tag_dict.items():
+        seg = f"{k}={v}"
+        added = len(seg) + (2 if rows[-1] else 0)
+        if rows[-1] and width + added > available:
+            rows.append([seg])
+            width = len(seg)
+        else:
+            rows[-1].append(seg)
+            width += added
+
+    out: list[str] = []
+    for i, row in enumerate(rows):
+        joined = "  ".join(colorize(seg, "tag") for seg in row)
+        marker = colorize("↳ ", "separator") if i == 0 else "  "
+        out.append(cont + marker + joined)
+    return out
+
+
+def _block_header(title: str) -> str:
     bar = colorize("─" * 3, "separator")
-    trail = colorize("─" * (66 - len(title)), "separator")
-    header = f"{bar} {colorize(title, 'block_header')} {trail}"
-    lines = [header]
+    trail = colorize("─" * (BLOCK_WIDTH - len(title) - 5), "separator")
+    return f"{bar} {colorize(title, 'block_header')} {trail}"
+
+
+def format_section_header(title: str) -> str:
+    return _block_header(title)
+
+
+def format_block(title: str, data: dict) -> str:
+    lines = [_block_header(title)]
     max_key = max(len(k) for k in data) if data else 0
     for k, v in data.items():
         padded = f"  {k}:".ljust(max_key + 4)  # 2 indent + key + colon + padding
         key = colorize(padded, "block_key")
         val = colorize(f" {v}", "block_value")
         lines.append(f"{key}{val}")
-    lines.append(colorize("─" * 70, "separator"))
+    lines.append(colorize("─" * BLOCK_WIDTH, "separator"))
     return "\n".join(lines)
 
 
@@ -151,10 +292,7 @@ def _render_body(body: object, key_prefix: str, lines: list[str]) -> None:
 
 
 def format_return_value(obj: dict) -> str:
-    bar = colorize("─" * 3, "separator")
-    trail = colorize("─" * (66 - len("return")), "separator")
-    header = f"{bar} {colorize('return', 'block_header')} {trail}"
-    lines = ["\n" + header]
+    lines = ["\n" + _block_header("return")]
     max_key = max(len(k) for k in obj) if obj else 0
     for k, v in obj.items():
         padded = f"  {k}:".ljust(max_key + 4)
@@ -169,9 +307,9 @@ def format_return_value(obj: dict) -> str:
             except (json.JSONDecodeError, ValueError):
                 lines.append(f"{key}{colorize(f' {v}', 'block_value')}")
         else:
-            val = colorize(f" {v}", "block_value")
+            val = colorize(f" {_format_body_value(v)}", "block_value")
             lines.append(f"{key}{val}")
-    lines.append(colorize("─" * 70, "separator"))
+    lines.append(colorize("─" * BLOCK_WIDTH, "separator"))
     return "\n".join(lines)
 
 
@@ -188,21 +326,20 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
     verbose : bool
         If True, show all fields and skip suppression.
     """
-    lines: list[str] = []
-    parts: list[str] = []
-
-    if "timestamp" in record:
-        parts.append(format_timestamp(record["timestamp"]))
+    observe_record(record)
 
     level = record.get("level", "INFO")
-    parts.append(format_level(level))
+    level_key = _level_color_key(level)
 
-    if "location" in record:
-        parts.append(format_location(record["location"]))
-
-    parts.append(colorize("│", "separator"))
-    parts.append(format_message(record.get("message", "")))
-    lines.append(" ".join(parts))
+    parts: list[str] = [
+        _bar(level_key),
+        _timestamp_column(record.get("timestamp", "")),
+        format_level(level),
+        format_location(str(record.get("location", ""))) if _loc_width else "",
+        colorize("│", "separator"),
+        format_message(record.get("message", ""), level_key),
+    ]
+    lines = [" ".join(p for p in parts if p)]
 
     # Show each extra field once, then suppress until its value changes
     tag_dict: dict[str, object] = {}
@@ -217,16 +354,19 @@ def format_json_line(record: dict, context_values: dict[str, str], verbose: bool
             context_values[k] = sv
 
     if tag_dict:
-        indent = " " * MSG_COL
-        prefix = indent + colorize("↳ ", "separator")
-
-        items = list(tag_dict.items())
-        first_k, first_v = items[0]
-        lines.append(prefix + format_tag(first_k, first_v))
-        for k, v in items[1:]:
-            lines.append(indent + "  " + format_tag(k, v))
+        lines.extend(_format_tags(tag_dict, level_key))
 
     return "\n".join(lines)
+
+
+def _timestamp_column(ts: str) -> str:
+    """Timestamp cell for the adaptive layout: real value, pad, or nothing."""
+    if ts:
+        observe_timestamp()
+        return format_timestamp(ts)
+    if _ts_seen:
+        return " " * TIMESTAMP_WIDTH
+    return ""
 
 
 def format_passthrough(text: str) -> str:
@@ -240,23 +380,29 @@ def format_warning(msg: str) -> str:
 def format_runtime_line(level: str, timestamp: str, location: str, message: str) -> str:
     # Default Lambda runtime logs carry `[Thread - main]`; some emitters use
     # `MainThread`. Both are noise — hide them, keep other thread names.
+    level_key = _level_color_key(level)
     display_loc = "" if location in ("main", "MainThread") else location
+    observe_location(display_loc)
     parts = [
-        format_timestamp(timestamp),
+        _bar(level_key),
+        _timestamp_column(timestamp),
         format_level(level),
-        format_location(display_loc),
+        format_location(display_loc) if _loc_width else "",
         colorize("│", "separator"),
-        _wrap_message(message),
+        _wrap_message(message, level_key),
     ]
-    return " ".join(parts)
+    return " ".join(p for p in parts if p)
 
 
 def format_stdlib_line(level: str, location: str, message: str) -> str:
+    level_key = _level_color_key(level)
+    observe_location(location)
     parts = [
-        " " * TIMESTAMP_WIDTH,
+        _bar(level_key),
+        _timestamp_column(""),
         format_level(level),
-        format_location(location),
+        format_location(location) if _loc_width else "",
         colorize("│", "separator"),
-        _wrap_message(message),
+        _wrap_message(message, level_key),
     ]
-    return " ".join(parts)
+    return " ".join(p for p in parts if p)

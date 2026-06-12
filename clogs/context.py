@@ -1,8 +1,6 @@
 """Context tracking and buffering."""
 from __future__ import annotations
 
-import json
-
 from clogs.config import CONTEXT_BUFFER_SIZE, JSON_BUFFER_MAX_LINES, KNOWN_FIELDS, PREFERRED_CONTEXT_FIELDS
 
 
@@ -76,6 +74,10 @@ class ContextTracker:
 
         self.json_buffer: list[str] = []
         self.buffering_json = False
+        # Structural state for the multi-line JSON buffer: brace/bracket
+        # depth tracked outside string literals.
+        self._json_depth = 0
+        self._json_in_string = False
 
     def add_record(self, record: dict) -> bool:
         """Buffer a record. Returns True once context_size records are in."""
@@ -95,18 +97,42 @@ class ContextTracker:
 
     def start_json_buffer(self, first_line: str) -> None:
         self.buffering_json = True
-        self.json_buffer = [first_line]
+        self.json_buffer = []
+        self._json_depth = 0
+        self._json_in_string = False
+        self.append_json_line(first_line)
+
+    def _scan_json_depth(self, line: str) -> None:
+        """Track brace/bracket depth outside string literals."""
+        escaped = False
+        for ch in line:
+            if escaped:
+                escaped = False
+                continue
+            if self._json_in_string:
+                if ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    self._json_in_string = False
+                continue
+            if ch == '"':
+                self._json_in_string = True
+            elif ch in "{[":
+                self._json_depth += 1
+            elif ch in "}]":
+                self._json_depth -= 1
+        # Valid JSON strings can't span lines — a string still open at EOL
+        # means malformed input; reset so a stray quote can't poison the scan.
+        self._json_in_string = False
 
     def append_json_line(self, line: str) -> bool:
-        """Append a line. Returns True when the buffer is complete or hits the safety limit."""
+        """Append a line. Returns True when the buffer is structurally complete
+        (brace depth back to zero) or hits the safety limit."""
         self.json_buffer.append(line)
-        if line in ("}", "]") or len(self.json_buffer) > JSON_BUFFER_MAX_LINES:
+        self._scan_json_depth(line)
+        if self._json_depth <= 0:
             return True
-        try:
-            json.loads("\n".join(self.json_buffer))
-            return True
-        except json.JSONDecodeError:
-            return False
+        return len(self.json_buffer) > JSON_BUFFER_MAX_LINES
 
     def take_json_buffer(self) -> list[str]:
         buf = self.json_buffer

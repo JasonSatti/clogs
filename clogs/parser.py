@@ -10,6 +10,7 @@ from clogs.config import MAX_JSON_PARSE_BYTES
 
 class LineType(Enum):
     JSON_LOG = auto()
+    JSON_OBJECT = auto()
     LAMBDA_RUNTIME = auto()
     PYTHON_STDLIB = auto()
     WARNING = auto()
@@ -43,11 +44,13 @@ class ParsedLine:
         self.message = message
 
 
+# Lambda runtime format. Real CloudWatch / runtime output is tab-separated
+# without a thread segment; `sls invoke local` adds `[Thread - name]`.
 _LAMBDA_RE = re.compile(
     r"^\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+"
     r"(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+"
     r"\S+\s+"  # request ID
-    r"\[Thread\s*-\s*([^\]]+)\]\s+(.*)"
+    r"(?:\[Thread\s*-\s*([^\]]+)\]\s+)?(.*)"
 )
 
 _STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):(\S+):(.*)")
@@ -59,10 +62,33 @@ _WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")
 # single multi-MB line; match on the prefix so we skip the expensive json.loads.
 _DDTRACE_PREFIX_RE = re.compile(r'^\{\s*"traces"\s*:')
 
+# `aws logs tail` prefixes every event with its own ISO timestamp. Strip it
+# so the wrapped payload (Powertools JSON, runtime lines) still classifies.
+_LOG_TAIL_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+(.+)$"
+)
+
+_DDTRACE_BANNER = "Configured ddtrace instrumentation"
+
 
 def parse_line(line: str) -> ParsedLine:
     """Classify a raw log line and extract its fields."""
     raw = line.rstrip("\r\n")
+    parsed = _classify(raw)
+
+    # Unrecognized line starting with an ISO timestamp: try again without the
+    # prefix (`aws logs tail` wraps every event this way).
+    if parsed.line_type is LineType.PASSTHROUGH:
+        m = _LOG_TAIL_PREFIX_RE.match(raw.strip())
+        if m:
+            inner = _classify(m.group(1))
+            if inner.line_type is not LineType.PASSTHROUGH:
+                return inner
+
+    return parsed
+
+
+def _classify(raw: str) -> ParsedLine:
     stripped = raw.strip()
 
     if not stripped:
@@ -88,6 +114,13 @@ def parse_line(line: str) -> ParsedLine:
                     return ParsedLine(LineType.JSON_LOG, record=record)
                 if "traces" in record:
                     return ParsedLine(LineType.NOISE)
+                if not oversized:
+                    # A bare JSON object with no message — possibly a single-
+                    # line invoke return value. Held by the CLI so a terminal
+                    # one can render as a return block.
+                    return ParsedLine(
+                        LineType.JSON_OBJECT, record=record, message=stripped
+                    )
         except json.JSONDecodeError:
             pass
 
@@ -112,18 +145,21 @@ def parse_line(line: str) -> ParsedLine:
             LineType.LAMBDA_RUNTIME,
             level=m.group(1),
             timestamp=m.group(2),
-            location=m.group(3).strip(),
+            location=(m.group(3) or "").strip(),
             message=m.group(4),
         )
 
     # Python stdlib: LEVEL:logger:message
     m = _STDLIB_RE.match(stripped)
     if m:
+        message = m.group(3).strip()
+        if message.startswith(_DDTRACE_BANNER):
+            return ParsedLine(LineType.NOISE)
         return ParsedLine(
             LineType.PYTHON_STDLIB,
             level=m.group(1),
             location=m.group(2),
-            message=m.group(3).strip(),
+            message=message,
         )
 
     # Python warnings (e.g., DeprecationWarning: ...)
@@ -145,7 +181,7 @@ def parse_line(line: str) -> ParsedLine:
     if stripped == "null":
         return ParsedLine(LineType.NOISE)
 
-    if stripped.startswith("Configured ddtrace instrumentation"):
+    if stripped.startswith(_DDTRACE_BANNER):
         return ParsedLine(LineType.NOISE)
 
     return ParsedLine(LineType.PASSTHROUGH, message=raw)

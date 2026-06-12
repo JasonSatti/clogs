@@ -1,25 +1,39 @@
 """Tests for formatting functions."""
 import json
+import re
 
 import pytest
 
+from clogs.config import COLORS
 from clogs.formatter import (
     colorize,
     format_block,
+    format_json_line,
     format_level,
     format_location,
     format_return_value,
     format_runtime_line,
     format_stdlib_line,
     format_timestamp,
+    reset_layout,
+    set_color_enabled,
 )
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text)
+
+
 @pytest.fixture(autouse=True)
-def _unset_no_color(monkeypatch):
+def _clean_state(monkeypatch):
     # Ambient NO_COLOR in the shell would suppress ANSI and break tests that
     # assert specific color codes. Tests for NO_COLOR behavior re-set it explicitly.
     monkeypatch.delenv("NO_COLOR", raising=False)
+    set_color_enabled(None)
+    reset_layout()
+    yield
+    set_color_enabled(None)
+    reset_layout()
 
 
 class TestColorize:
@@ -35,15 +49,24 @@ class TestColorize:
         monkeypatch.setenv("NO_COLOR", "1")
         assert colorize("hello", "info") == "hello"
 
-    def test_no_color_empty_value_still_suppresses(self, monkeypatch):
-        # no-color.org spec: presence alone disables color, regardless of value.
+    def test_no_color_empty_value_keeps_color(self, monkeypatch):
+        # no-color.org spec: only a *non-empty* NO_COLOR disables color.
         monkeypatch.setenv("NO_COLOR", "")
-        assert colorize("hello", "info") == "hello"
+        assert "\033[" in colorize("hello", "info")
 
     def test_no_color_unset_keeps_color(self, monkeypatch):
         monkeypatch.delenv("NO_COLOR", raising=False)
         result = colorize("hello", "info")
         assert "\033[" in result
+
+    def test_explicit_disable_overrides(self):
+        set_color_enabled(False)
+        assert colorize("hello", "info") == "hello"
+
+    def test_explicit_enable_overrides_no_color(self, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "1")
+        set_color_enabled(True)
+        assert "\033[" in colorize("hello", "info")
 
 
 class TestFormatTimestamp:
@@ -69,12 +92,22 @@ class TestFormatLevel:
     def test_lowercase_warning_uses_warning_color(self):
         result = format_level("warning")
         assert "WARN" in result
-        assert "\033[1;38;5;214m" in result
+        assert COLORS["warning"] in result
+
+    def test_critical_abbreviated_with_critical_color(self):
+        result = format_level("CRITICAL")
+        assert "CRIT" in result
+        assert "CRITICAL" not in result
+        assert COLORS["critical"] in result
 
     def test_unknown_level_uses_info_color(self):
         # Should not crash
         result = format_level("TRACE")
         assert "TRACE" in result
+
+    def test_long_unknown_level_truncated_to_column_width(self):
+        result = _strip_ansi(format_level("EXCEPTION"))
+        assert len(result) == 5
 
 
 class TestFormatLocation:
@@ -86,6 +119,36 @@ class TestFormatLocation:
     def test_long_location_truncated(self):
         result = format_location("a" * 30)
         assert "…" in result
+
+
+class TestAdaptiveLayout:
+    def test_location_column_sized_to_longest_seen(self):
+        out = _strip_ansi(format_location("db:4"))
+        assert out == "db:4"
+        out = _strip_ansi(format_location("permissions:18"))
+        assert out == "permissions:18"
+        # Width stays at the high-water mark for shorter locations
+        out = _strip_ansi(format_location("db:4"))
+        assert out == "db:4".ljust(14)
+
+    def test_location_width_capped(self):
+        out = _strip_ansi(format_location("x" * 40))
+        assert len(out) == 22
+        assert out.endswith("…")
+
+    def test_timestamp_column_absent_until_seen(self):
+        line = _strip_ansi(format_stdlib_line("INFO", "mod", "msg"))
+        assert line.startswith("▎ INFO")
+
+    def test_timestamp_column_padded_after_seen(self):
+        format_json_line(
+            {"level": "INFO", "message": "a", "timestamp": "2026-03-14T08:00:00Z"},
+            {},
+            verbose=False,
+        )
+        line = _strip_ansi(format_stdlib_line("INFO", "mod", "msg"))
+        # Timestamp column now exists — stdlib lines pad it to stay aligned
+        assert line.startswith("▎ " + " " * 8 + " INFO")
 
 
 class TestFormatBlock:
@@ -106,15 +169,15 @@ class TestReturnValue:
 
     def test_status_code_2xx_green(self):
         result = format_return_value({"statusCode": 200})
-        assert "\033[1;38;5;78m 200" in result  # ok/sea green
+        assert COLORS["ok"] + " 200" in result
 
     def test_status_code_4xx_yellow(self):
         result = format_return_value({"statusCode": 404})
-        assert "\033[1;38;5;214m 404" in result  # warning/amber
+        assert COLORS["warning"] + " 404" in result
 
     def test_status_code_5xx_red(self):
         result = format_return_value({"statusCode": 504})
-        assert "\033[1;38;5;9m 504" in result  # error/light red
+        assert COLORS["error"] + " 504" in result
 
     def test_status_code_string_no_color(self):
         result = format_return_value({"statusCode": "200"})
@@ -168,6 +231,17 @@ class TestReturnValue:
         # headers should be rendered as-is, not parsed
         assert "headers:" in result
 
+    def test_dict_value_rendered_as_json_not_python_repr(self):
+        payload = {"statusCode": 200, "headers": {"Content-Type": "application/json"}}
+        result = format_return_value(payload)
+        assert '"Content-Type": "application/json"' in result
+        assert "'Content-Type'" not in result
+
+    def test_header_and_footer_same_width(self):
+        result = _strip_ansi(format_return_value({"statusCode": 200}))
+        lines = [l for l in result.split("\n") if l]
+        assert len(lines[0]) == len(lines[-1])
+
 
 class TestFormatRuntimeLine:
     def test_contains_all_fields(self):
@@ -210,13 +284,12 @@ class TestFormatStdlibLine:
         assert "my_module" in result
         assert "something broke" in result
 
-    def test_empty_timestamp_column(self):
-        """Stdlib lines have no timestamp — should start with padding."""
+    def test_timestamp_column_collapsed_when_stream_has_none(self):
+        """Stdlib lines have no timestamp — the column shouldn't exist
+        unless a timestamped line has been seen (adaptive layout)."""
         result = format_stdlib_line("INFO", "mod", "msg")
-        # Strip ANSI codes and check the line starts with spaces (no timestamp)
-        import re
-        clean = re.sub(r"\033\[[^m]*m", "", result)
-        assert clean.startswith("        ")
+        clean = _strip_ansi(result)
+        assert clean.startswith("▎ INFO")
 
     def test_separator_present(self):
         result = format_stdlib_line("INFO", "loc", "msg")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import TextIO
 
@@ -15,8 +16,12 @@ from clogs.formatter import (
     format_passthrough,
     format_return_value,
     format_runtime_line,
+    format_section_header,
     format_stdlib_line,
     format_warning,
+    observe_record,
+    reset_layout,
+    set_color_enabled,
 )
 from clogs.parser import LineType, ParsedLine, parse_line
 
@@ -63,10 +68,9 @@ def _render_context_block(fields: dict[str, str]) -> str:
 
 
 def _render_startup_header() -> str:
-    bar = colorize("─── ", "separator")
-    title = colorize("startup", "block_header")
-    trail = colorize(" ───", "separator")
-    return f"{bar}{title}{trail}"
+    # Emitted after the chatter it labels (output streams immediately), so
+    # the arrow points up at the startup section above.
+    return format_section_header("↑ startup")
 
 
 def _flush_record_buffer(ctx: ContextTracker, *, eof: bool = False) -> list[str]:
@@ -76,6 +80,12 @@ def _flush_record_buffer(ctx: ContextTracker, *, eof: bool = False) -> list[str]
 
     pending = ctx.pending_output
     out: list[str] = []
+
+    # Pre-scan buffered records so the adaptive columns (location width,
+    # timestamp presence) are sized before the first line renders.
+    for item in pending:
+        if isinstance(item, dict):
+            observe_record(item)
 
     if ctx.has_records() and not ctx.verbose:
         fields = ctx.take_context()
@@ -115,6 +125,7 @@ def run(
     if context_size is not None:
         kwargs["context_size"] = context_size
     ctx = ContextTracker(**kwargs)
+    reset_layout()
 
     def _flush_held_as_generic() -> None:
         if ctx.held_multiline is None:
@@ -131,7 +142,8 @@ def run(
             stripped = line.strip()
 
             if ctx.buffering_json:
-                if ctx.append_json_line(stripped):
+                # Keep indentation so a non-JSON fallback prints faithfully.
+                if ctx.append_json_line(line.rstrip()):
                     buf = ctx.take_json_buffer()
                     if ctx.buffering_records and ctx.has_records():
                         # Inside the context window, after the first record.
@@ -157,7 +169,18 @@ def run(
                 _flush_held_as_generic()
 
             if parsed.line_type is LineType.MULTILINE_JSON_START:
-                ctx.start_json_buffer(stripped)
+                ctx.start_json_buffer(line.rstrip())
+                continue
+
+            # A complete single-line JSON object with no message field —
+            # possibly an invoke return value. Route it through the same
+            # held/pending machinery as multi-line blobs so a terminal one
+            # renders as a return block at EOF.
+            if parsed.line_type is LineType.JSON_OBJECT:
+                if ctx.buffering_records and ctx.has_records():
+                    ctx.add_multiline([parsed.message])
+                else:
+                    ctx.held_multiline = [parsed.message]
                 continue
 
             # Buffering phase: collect JSON records for context detection
@@ -233,7 +256,25 @@ def main() -> None:
         metavar="N",
         help="number of JSON records to inspect for the context block (default: 5, 0 to disable)",
     )
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="when to emit ANSI colors (default: auto — on for terminals, off when piped or NO_COLOR is set)",
+    )
     args = parser.parse_args()
     if args.context is not None and args.context < 0:
         parser.error("--context must be >= 0")
+
+    if args.color == "always":
+        set_color_enabled(True)
+    elif args.color == "never":
+        set_color_enabled(False)
+    else:
+        set_color_enabled(sys.stdout.isatty() and not os.environ.get("NO_COLOR"))
+
     run(sys.stdin, sys.stdout, verbose=args.verbose, context_size=args.context)
+
+
+if __name__ == "__main__":
+    main()
