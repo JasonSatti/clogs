@@ -76,8 +76,10 @@ def observe_record(record: dict) -> None:
 
 
 def _level_cell_width() -> int:
-    # Badge chips wrap the level in one space per side
-    return LEVEL_WIDTH + 2 if _badges else LEVEL_WIDTH
+    # Badge chips are uniform width: sized so 4-letter levels (INFO, WARN,
+    # CRIT — the common ones) center perfectly; 5-letter levels carry the
+    # unavoidable half-character offset.
+    return LEVEL_WIDTH + 3 if _badges else LEVEL_WIDTH
 
 
 def _sep_col() -> int:
@@ -145,14 +147,11 @@ def format_level(level: str) -> str:
     level_upper = level.upper()
     display = _LEVEL_DISPLAY.get(level_upper, level_upper)[:LEVEL_WIDTH]
     if _badges:
-        # Chip hugs the word with one space per side, so the text is centered
-        # by construction; the cell pads after the chip to stay aligned.
-        chip = f" {display} "
-        pad = " " * (_level_cell_width() - len(chip))
+        chip = display.center(_level_cell_width())
         code = BADGE_COLORS.get(color_key, "") if _color_enabled() else ""
         if code:
-            return f"{code}{chip}{RESET}{pad}"
-        return chip + pad
+            return f"{code}{chip}{RESET}"
+        return chip
     return colorize(display.ljust(LEVEL_WIDTH), color_key)
 
 
