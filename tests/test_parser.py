@@ -17,11 +17,13 @@ class TestJsonLog:
         assert parsed.record["message"] == "hello world"
         assert parsed.record["level"] == "INFO"
 
-    def test_json_without_message_is_not_log(self):
+    def test_json_without_message_is_json_object(self):
         line = json.dumps({"status": 200, "body": "ok"})
         parsed = parse_line(line)
-        # No "message" field — not classified as a log line
-        assert parsed.line_type != LineType.JSON_LOG
+        # No "message" field — held as a bare object (possible return value)
+        assert parsed.line_type == LineType.JSON_OBJECT
+        assert parsed.record == {"status": 200, "body": "ok"}
+        assert parsed.message == line
 
     def test_ddtrace_spans_suppressed(self):
         line = json.dumps({"traces": [[{"span_id": 123}]]})
@@ -115,6 +117,51 @@ class TestLambdaRuntime:
         assert parsed.line_type == LineType.LAMBDA_RUNTIME
         assert parsed.level == "ERROR"
 
+    def test_no_thread_segment(self):
+        """Real CloudWatch runtime format: tab-separated, no thread part."""
+        line = "[INFO]\t2026-03-14T13:35:29.236Z\t6f1b1c8e-1234\thandler started"
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.LAMBDA_RUNTIME
+        assert parsed.level == "INFO"
+        assert parsed.location == ""
+        assert parsed.message == "handler started"
+
+
+class TestLogTailPrefix:
+    def test_prefixed_json_log(self):
+        inner = json.dumps({"level": "INFO", "message": "hi", "timestamp": "t"})
+        parsed = parse_line(f"2026-03-14T13:35:29.236000+00:00 {inner}")
+        assert parsed.line_type == LineType.JSON_LOG
+        assert parsed.record["message"] == "hi"
+
+    def test_prefixed_runtime_line(self):
+        line = (
+            "2026-03-14T13:35:29+00:00 "
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] started"
+        )
+        parsed = parse_line(line)
+        assert parsed.line_type == LineType.LAMBDA_RUNTIME
+
+    def test_prefixed_stdlib_inherits_event_timestamp(self):
+        """stdlib logs carry no timestamp — the tail event timestamp fills in."""
+        parsed = parse_line("2026-03-14T13:35:29.236Z INFO:my_logger:hello")
+        assert parsed.line_type == LineType.PYTHON_STDLIB
+        assert parsed.timestamp == "2026-03-14T13:35:29.236Z"
+        assert parsed.message == "hello"
+
+    def test_prefixed_runtime_keeps_own_timestamp(self):
+        line = (
+            "2026-03-14T13:36:00Z "
+            "[INFO] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] started"
+        )
+        parsed = parse_line(line)
+        assert parsed.timestamp == "2026-03-14T13:35:29.236Z"
+
+    def test_prefixed_plain_text_stays_passthrough(self):
+        parsed = parse_line("2026-03-14T13:35:29Z something unstructured")
+        assert parsed.line_type == LineType.PASSTHROUGH
+        assert "2026-03-14T13:35:29Z" in parsed.message
+
 
 class TestPythonStdlib:
     def test_basic_format(self):
@@ -141,6 +188,10 @@ class TestNoiseSuppression:
 
     def test_ddtrace_banner(self):
         assert parse_line("Configured ddtrace instrumentation for flask").line_type == LineType.NOISE
+
+    def test_ddtrace_banner_via_stdlib_logger(self):
+        line = "INFO:ddtrace._monkey:Configured ddtrace instrumentation for 62 integration(s)."
+        assert parse_line(line).line_type == LineType.NOISE
 
     def test_warnings_warn_continuation(self):
         assert parse_line("warnings.warn('deprecated')").line_type == LineType.NOISE

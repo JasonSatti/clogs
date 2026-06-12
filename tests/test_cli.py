@@ -1,4 +1,6 @@
 """Tests for the main processing loop."""
+from __future__ import annotations
+
 import json
 import re
 from io import StringIO
@@ -321,6 +323,132 @@ class TestMultilineJsonReturn:
         context_section = output[context_start:context_end]
         assert "region:" in context_section
         assert '"foo": 1' in output
+
+
+class TestReturnValueShapes:
+    def test_nested_dict_as_last_key_still_return_block(self):
+        """A bare nested '}' line must not terminate the buffer early."""
+        lines = [
+            _make_json_line(message="before"),
+            "{",
+            '  "statusCode": 200,',
+            '  "headers": {',
+            '    "Content-Type": "application/json"',
+            "  }",
+            "}",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+        assert "Content-Type" in output
+
+    def test_single_line_dict_at_eof_renders_as_return_block(self):
+        """`sam local invoke` emits the return value as one-line JSON."""
+        lines = [
+            _make_json_line(message="before"),
+            '{"statusCode": 200, "body": "ok"}',
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "─── return " in output
+        assert "statusCode" in output
+
+    def test_single_line_dict_mid_stream_not_labeled_return(self):
+        lines = [
+            _make_json_line(message="before"),
+            '{"statusCode": 200, "body": "ok"}',
+            _make_json_line(message="after"),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "statusCode" in output
+        assert "─── return " not in output
+
+    def test_unparseable_buffer_preserves_indentation(self):
+        """The raw fallback for an incomplete blob must keep original indentation."""
+        lines = [
+            _make_json_line(message="first"),
+            "{",
+            "    indented line one",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "    indented line one" in output
+
+
+class TestLevelRendering:
+    def test_warn_shorthand_uses_warning_color(self):
+        """Non-Python loggers emit WARN — it must not fall back to info blue."""
+        from clogs.config import COLORS
+
+        line = json.dumps({"level": "WARN", "location": "h:1", "message": "careful",
+                           "timestamp": "2026-03-14T08:42:15.123Z"})
+        output = _run_clogs(line, context_size=0)
+        assert COLORS["warning"] in output
+
+    def test_fatal_shorthand_uses_critical_color(self):
+        from clogs.config import COLORS
+
+        line = json.dumps({"level": "FATAL", "location": "h:1", "message": "dead",
+                           "timestamp": "2026-03-14T08:42:15.123Z"})
+        output = _run_clogs(line, context_size=0)
+        assert COLORS["critical"] in output
+
+    def test_warn_runtime_line_parsed(self):
+        line = "[WARN] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] heads up"
+        output = _strip_ansi(_run_clogs(line))
+        assert "heads up" in output
+        assert "[WARN]" not in output
+
+    def test_critical_abbreviated_and_aligned(self):
+        lines = [
+            json.dumps({"level": "CRITICAL", "location": "h:9", "message": "meltdown",
+                        "timestamp": "2026-03-14T08:42:15.123Z"}),
+            json.dumps({"level": "ERROR", "location": "h:9", "message": "bad",
+                        "timestamp": "2026-03-14T08:42:16.123Z"}),
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines), context_size=0))
+        assert "CRIT " in output
+        assert "CRITICAL" not in output
+        crit_line, error_line = [ln for ln in output.split("\n") if "│" in ln]
+        assert crit_line.index("│") == error_line.index("│")
+
+
+class TestRealRuntimeFormats:
+    def test_runtime_without_thread_segment(self):
+        """Real CloudWatch runtime lines have no [Thread - x] part."""
+        line = "[INFO]\t2026-03-14T13:35:29.236Z\t6f1b1c8e-1234\thandler started"
+        output = _strip_ansi(_run_clogs(line))
+        assert "handler started" in output
+        assert "13:35:29" in output
+        assert "[INFO]" not in output
+
+    def test_aws_logs_tail_prefix_stripped(self):
+        """`aws logs tail` wraps every event in its own ISO timestamp."""
+        line = (
+            "2026-03-14T13:35:29.236000+00:00 "
+            + _make_json_line(message="from cloudwatch")
+        )
+        output = _strip_ansi(_run_clogs(line))
+        assert "from cloudwatch" in output
+        assert "08:42:15" in output  # record's own timestamp used
+
+    def test_aws_logs_tail_stdlib_keeps_event_timestamp(self):
+        """The wrapped format has no timestamp of its own — use the event's."""
+        output = _strip_ansi(_run_clogs("2026-03-14T13:35:29.236Z INFO:my_logger:hello"))
+        assert "hello" in output
+        assert "13:35:29" in output
+
+    def test_plain_text_with_timestamp_prefix_passes_through(self):
+        line = "2026-03-14T13:35:29.236Z something unstructured"
+        output = _strip_ansi(_run_clogs(line))
+        assert "2026-03-14T13:35:29.236Z something unstructured" in output
+
+
+class TestDdtraceBanner:
+    def test_stdlib_ddtrace_banner_suppressed(self):
+        line = (
+            "INFO:ddtrace._monkey:Configured ddtrace instrumentation for "
+            "62 integration(s). The following modules have been patched: flask"
+        )
+        output = _run_clogs(line)
+        assert output.strip() == ""
 
 
 class TestContextFlag:

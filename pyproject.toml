@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clogs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Colorized, condensed log formatting for AWS Lambda, Powertools, and Python logs"
 authors = [{name = "Jason Satti"}]
 keywords = ["lambda", "logs", "cli", "formatter", "powertools"]
