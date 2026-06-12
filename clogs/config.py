@@ -37,7 +37,7 @@ LEVEL_PALETTE = {
     "info": ("#3D7FE0", 33),
     "warning": ("#FFAC2E", 214),
     "error": ("#EB4D58", 9),
-    "critical": ("#FF6B7A", 196),
+    "critical": ("#FF3B4E", 196),
     "debug": ("#8C939E", 248),
     "ok": ("#53B06A", 78),
 }
