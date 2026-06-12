@@ -132,7 +132,9 @@ clogs --badges
 | `--version` / `-h` | Version / help | — |
 
 Flag defaults can be changed in the [config file](#configuration); CLI
-arguments always win.
+arguments always win — boolean flags have a `--no-` form (`--no-badges`,
+`--no-delta`, `--no-verbose`) and `--level all` clears a configured
+minimum level.
 
 ### Environment variables
 

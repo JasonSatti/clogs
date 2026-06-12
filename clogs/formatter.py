@@ -407,18 +407,9 @@ def format_return_value(obj: dict) -> str:
 
 
 def format_json_line(record: dict, context_values: dict[str, str], verbose: bool) -> str:
-    """Format a JSON log record as a colored line with suppressed-repeat tags.
-
-    Parameters
-    ----------
-    record : dict
-        Parsed JSON log record.
-    context_values : dict
-        Rolling baseline of previously seen field values. Mutated in-place
-        to track suppressions across calls.
-    verbose : bool
-        If True, show all fields and skip suppression.
-    """
+    """Format a JSON log record as a colored line with its tags. Mutates
+    context_values to suppress repeated tag values across calls (unless
+    verbose)."""
     observe_record(record)
 
     level = record.get("level", "INFO")

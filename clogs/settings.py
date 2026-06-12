@@ -14,9 +14,12 @@ CLOGS_CONFIG environment variable.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 from clogs import config
+
+_HEX_COLOR_RE = re.compile(r"#?[0-9a-fA-F]{6}")
 
 _LEVEL_COLOR_KEYS = set(config.LEVEL_PALETTE)
 _VALID_DEFAULTS = {
@@ -79,6 +82,19 @@ def _parse_value(raw: str) -> object:
     return raw
 
 
+def _strip_inline_comment(value: str) -> str:
+    quote = ""
+    for i, ch in enumerate(value):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#":
+            return value[:i].rstrip()
+    return value
+
+
 def _mini_toml(text: str) -> dict:
     """Tiny TOML-subset parser for Python 3.9/3.10 (no tomllib): sections,
     strings, ints, floats, booleans, and single-line arrays."""
@@ -94,11 +110,7 @@ def _mini_toml(text: str) -> dict:
         if "=" not in line:
             continue
         key, _, value = line.partition("=")
-        value = value.strip()
-        # Strip inline comments (not inside a quoted string)
-        if not value.startswith(("'", '"', "[")) and "#" in value:
-            value = value.split("#", 1)[0].strip()
-        current[key.strip()] = _parse_value(value)
+        current[key.strip()] = _parse_value(_strip_inline_comment(value.strip()))
     return data
 
 
@@ -116,13 +128,29 @@ def load() -> dict:
         return {}
 
 
+def _valid_color_spec(spec: object) -> bool:
+    if isinstance(spec, bool):
+        return False
+    if isinstance(spec, int):
+        return 0 <= spec <= 255
+    if isinstance(spec, str):
+        return _HEX_COLOR_RE.fullmatch(spec) is not None
+    return False
+
+
 def apply(data: dict) -> dict:
     """Apply settings to the runtime config. Returns CLI argument defaults."""
     colors = data.get("colors", {})
     if isinstance(colors, dict):
         for key, spec in colors.items():
-            if key not in config.COLORS or not isinstance(spec, (str, int)):
+            if key not in config.COLORS:
                 print(f"clogs: ignoring unknown color setting {key!r}", file=sys.stderr)
+                continue
+            if not _valid_color_spec(spec):
+                print(
+                    f"clogs: ignoring invalid color {key!r} (use '#RRGGBB' or 0-255)",
+                    file=sys.stderr,
+                )
                 continue
             bold = key in _LEVEL_COLOR_KEYS
             config.COLORS[key] = config.color_code(spec, bold=bold)

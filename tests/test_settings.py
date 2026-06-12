@@ -45,6 +45,17 @@ class TestMiniToml:
         data = settings._mini_toml('[colors]\ninfo = "#3D7FE0"\n')
         assert data["colors"]["info"] == "#3D7FE0"
 
+    def test_array_with_inline_comment(self):
+        """The README's own config example must parse on 3.9/3.10."""
+        data = settings._mini_toml(
+            '[context]\nextra_preferred_fields = ["tenant_id"]   # extra fields\n'
+        )
+        assert data["context"]["extra_preferred_fields"] == ["tenant_id"]
+
+    def test_quoted_string_with_trailing_comment(self):
+        data = settings._mini_toml('[colors]\ninfo = "#3D7FE0"  # hex\n')
+        assert data["colors"]["info"] == "#3D7FE0"
+
 
 class TestConfigPath:
     def test_env_override(self, monkeypatch):
@@ -86,6 +97,16 @@ class TestApply:
         settings.apply({"colors": {"bogus": "#000000"}})
         assert config.COLORS == before
         assert "bogus" in capsys.readouterr().err
+
+    def test_invalid_color_values_ignored_without_crash(self, capsys):
+        before = dict(config.COLORS)
+        settings.apply({"colors": {"info": "blue", "tag": 999, "error": True}})
+        assert config.COLORS == before
+        assert capsys.readouterr().err.count("invalid color") == 3
+
+    def test_one_bad_color_does_not_block_the_rest(self):
+        settings.apply({"colors": {"info": "nope", "tag": 213}})
+        assert config.COLORS["tag"] == "\033[38;5;213m"
 
     def test_location_width(self):
         settings.apply({"layout": {"location_width": 10}})

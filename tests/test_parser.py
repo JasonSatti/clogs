@@ -117,6 +117,12 @@ class TestLambdaRuntime:
         assert parsed.line_type == LineType.LAMBDA_RUNTIME
         assert parsed.level == "ERROR"
 
+    def test_shorthand_levels_parsed(self):
+        assert parse_line("FATAL:my_logger:boom").line_type == LineType.PYTHON_STDLIB
+        assert parse_line("CRIT:my_logger:boom").line_type == LineType.PYTHON_STDLIB
+        line = "[FATAL] 2026-03-14T13:35:29.236Z req-1 [Thread - main] boom"
+        assert parse_line(line).line_type == LineType.LAMBDA_RUNTIME
+
     def test_no_thread_segment(self):
         """Real CloudWatch runtime format: tab-separated, no thread part."""
         line = "[INFO]\t2026-03-14T13:35:29.236Z\t6f1b1c8e-1234\thandler started"

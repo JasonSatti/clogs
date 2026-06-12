@@ -495,6 +495,67 @@ class TestLifecycleLines:
         assert output.index("second") < output.index("invocation req-bbb") < output.index("third")
 
 
+class TestLifecycleOnlyStreams:
+    def test_no_false_startup_header(self):
+        """REPORT output is structural — it must not earn a startup label."""
+        lines = [
+            "START RequestId: req-a Version: $LATEST",
+            "REPORT RequestId: req-a\tDuration: 100 ms\tBilled Duration: 100 ms",
+            "START RequestId: req-b Version: $LATEST",
+            "REPORT RequestId: req-b\tDuration: 200 ms\tBilled Duration: 200 ms",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "startup" not in output
+        assert "─── invocation req-a " in output
+        assert "─── invocation req-b " in output
+
+    def test_real_chatter_still_gets_startup_header(self):
+        lines = [
+            "Loading configuration...",
+            "START RequestId: req-a Version: $LATEST",
+        ]
+        output = _strip_ansi(_run_clogs("\n".join(lines)))
+        assert "↑ startup" in output
+        assert output.index("Loading configuration") < output.index("↑ startup")
+
+
+class TestConfigPrecedence:
+    def _run_main(self, config_text, *argv, stdin=""):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(config_text)
+            path = f.name
+        return subprocess.run(
+            [sys.executable, "-m", "clogs", "--color", "never", *argv],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLOGS_CONFIG": path},
+        ).stdout
+
+    def test_no_badges_overrides_config_true(self):
+        line = _make_json_line(message="hello")
+        with_config = self._run_main("[defaults]\nbadges = true\n", stdin=line)
+        overridden = self._run_main(
+            "[defaults]\nbadges = true\n", "--no-badges", stdin=line
+        )
+        assert "  INFO  " in with_config  # 8-wide badge cell
+        assert "  INFO  " not in overridden
+
+    def test_level_all_overrides_config_minimum(self):
+        line = _make_json_line(message="visible info")
+        filtered = self._run_main("[defaults]\nlevel = \"error\"\n", stdin=line)
+        cleared = self._run_main(
+            "[defaults]\nlevel = \"error\"\n", "--level", "all", stdin=line
+        )
+        assert "visible info" not in filtered
+        assert "visible info" in cleared
+
+
 class TestTracebacks:
     def test_exception_field_rendered_as_block(self):
         record = json.dumps({

@@ -49,14 +49,16 @@ class ParsedLine:
 
 # Lambda runtime format. Real CloudWatch / runtime output is tab-separated
 # without a thread segment; `sls invoke local` adds `[Thread - name]`.
+_LEVELS = r"DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|CRIT|FATAL"
+
 _LAMBDA_RE = re.compile(
-    r"^\[(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\]\s+"
+    rf"^\[({_LEVELS})\]\s+"
     r"(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+"
     r"\S+\s+"  # request ID
     r"(?:\[Thread\s*-\s*([^\]]+)\]\s+)?(.*)"
 )
 
-_STDLIB_RE = re.compile(r"^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL):(\S+):(.*)")
+_STDLIB_RE = re.compile(rf"^({_LEVELS}):(\S+):(.*)")
 
 # Python warnings format: /path/to/file.py:42: DeprecationWarning: message
 _WARNING_RE = re.compile(r"^.+:\d+: (\w+Warning): (.+)")

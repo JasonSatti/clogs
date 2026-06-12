@@ -289,18 +289,19 @@ def run(
                     # Interleaved with buffered records — keep source order.
                     ctx.add_formatted(formatted)
                 else:
-                    # A START divider closes the startup section — emit the
-                    # header for any chatter streamed above it, and don't
-                    # count the divider itself as startup chatter.
-                    if parsed.line_type is LineType.LAMBDA_START:
-                        if ctx.pre_record_streamed:
-                            _write(stdout, _render_startup_header())
-                            ctx.pre_record_streamed = False
-                        _write(stdout, formatted)
-                        continue
-                    # Pre-record chatter: stream immediately.
+                    # Lifecycle output (START dividers, REPORT blocks) is
+                    # structural, not startup chatter — it must not earn a
+                    # `↑ startup` header. A START also closes any open
+                    # startup section above it.
+                    if parsed.line_type is LineType.LAMBDA_START and ctx.pre_record_streamed:
+                        _write(stdout, _render_startup_header())
+                        ctx.pre_record_streamed = False
                     _write(stdout, formatted)
-                    ctx.pre_record_streamed = True
+                    if parsed.line_type not in (
+                        LineType.LAMBDA_START,
+                        LineType.LAMBDA_REPORT,
+                    ):
+                        ctx.pre_record_streamed = True
                 continue
 
             formatted = _format_parsed(parsed, ctx)
@@ -330,6 +331,7 @@ def run(
 
 def main() -> None:
     """Run the CLI."""
+    config_defaults = settings.apply(settings.load())
     parser = argparse.ArgumentParser(
         prog="clogs",
         description="Colorized, condensed log formatting for Lambda and Python logs",
@@ -342,7 +344,8 @@ def main() -> None:
     parser.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="show all fields on every line (no suppression)",
     )
     parser.add_argument(
@@ -361,7 +364,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--badges",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="render log levels as filled chips (Datadog status-chip style)",
     )
     parser.add_argument(
@@ -369,7 +373,7 @@ def main() -> None:
         "--level",
         default=None,
         metavar="LEVEL",
-        help="minimum level to show (debug, info, warning, error, critical)",
+        help="minimum level to show (debug, info, warning, error, critical; 'all' clears a config default)",
     )
     parser.add_argument(
         "-g",
@@ -381,7 +385,8 @@ def main() -> None:
     parser.add_argument(
         "-d",
         "--delta",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="show elapsed time since the previous record",
     )
     parser.add_argument(
@@ -390,16 +395,28 @@ def main() -> None:
         metavar="-- COMMAND",
         help="run COMMAND and format its merged stdout/stderr (avoids the 2>&1 dance)",
     )
-    parser.set_defaults(**settings.apply(settings.load()))
+    # Value options take config defaults directly — any CLI value overrides.
+    # Booleans merge after parsing instead, so --no-X can override a config
+    # `true` (set_defaults would make that impossible for store_true flags).
+    parser.set_defaults(
+        **{k: v for k, v in config_defaults.items() if k in ("color", "context", "level")}
+    )
     args = parser.parse_args()
+
+    verbose = args.verbose if args.verbose is not None else config_defaults.get("verbose", False)
+    badges = args.badges if args.badges is not None else config_defaults.get("badges", False)
+    delta = args.delta if args.delta is not None else config_defaults.get("delta", False)
 
     if args.context is not None and args.context < 0:
         parser.error("--context must be >= 0")
-    if args.level is not None:
-        key = args.level.lower()
+    level = args.level
+    if level is not None and level.lower() == "all":
+        level = None  # escape hatch for a config-file default
+    if level is not None:
+        key = level.lower()
         if LEVEL_ALIASES.get(key, key) not in _LEVEL_RANKS:
             parser.error(
-                f"invalid level {args.level!r} (choose from: debug, info, warning, error, critical)"
+                f"invalid level {level!r} (choose from: debug, info, warning, error, critical, all)"
             )
     grep = None
     if args.grep is not None:
@@ -415,7 +432,7 @@ def main() -> None:
     else:
         set_color_enabled(sys.stdout.isatty() and not os.environ.get("NO_COLOR"))
 
-    set_badges(args.badges)
+    set_badges(badges)
 
     command = list(args.command)
     if command and command[0] == "--":
@@ -439,11 +456,11 @@ def main() -> None:
     run(
         source,
         sys.stdout,
-        verbose=args.verbose,
+        verbose=verbose,
         context_size=args.context,
-        min_level=args.level,
+        min_level=level,
         grep=grep,
-        delta=args.delta,
+        delta=delta,
     )
     if proc is not None:
         sys.exit(proc.wait())
