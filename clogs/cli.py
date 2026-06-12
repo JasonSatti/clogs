@@ -38,7 +38,9 @@ def _format_parsed(parsed: ParsedLine, ctx: ContextTracker) -> str | None:
             parsed.level, parsed.timestamp, parsed.location, parsed.message
         )
     if lt is LineType.PYTHON_STDLIB:
-        return format_stdlib_line(parsed.level, parsed.location, parsed.message)
+        return format_stdlib_line(
+            parsed.level, parsed.location, parsed.message, parsed.timestamp
+        )
     if lt is LineType.WARNING or lt is LineType.FRAMEWORK_WARNING:
         return format_warning(parsed.message)
     if lt is LineType.PASSTHROUGH:
@@ -121,7 +123,12 @@ def run(
     verbose: bool = False,
     context_size: int | None = None,
 ) -> None:
-    """Format logs from stdin to stdout."""
+    """Format logs from stdin to stdout.
+
+    Note: color and badge styling are process-global formatter state
+    (see set_color_enabled / set_badges); adaptive layout state is reset
+    per call. The CLI configures styling before calling this.
+    """
     kwargs: dict[str, bool | int] = {"verbose": verbose}
     if context_size is not None:
         kwargs["context_size"] = context_size

@@ -1,4 +1,6 @@
 """Tests for the main processing loop."""
+from __future__ import annotations
+
 import json
 import re
 from io import StringIO
@@ -371,6 +373,29 @@ class TestReturnValueShapes:
 
 
 class TestLevelRendering:
+    def test_warn_shorthand_uses_warning_color(self):
+        """Non-Python loggers emit WARN — it must not fall back to info blue."""
+        from clogs.config import COLORS
+
+        line = json.dumps({"level": "WARN", "location": "h:1", "message": "careful",
+                           "timestamp": "2026-03-14T08:42:15.123Z"})
+        output = _run_clogs(line, context_size=0)
+        assert COLORS["warning"] in output
+
+    def test_fatal_shorthand_uses_critical_color(self):
+        from clogs.config import COLORS
+
+        line = json.dumps({"level": "FATAL", "location": "h:1", "message": "dead",
+                           "timestamp": "2026-03-14T08:42:15.123Z"})
+        output = _run_clogs(line, context_size=0)
+        assert COLORS["critical"] in output
+
+    def test_warn_runtime_line_parsed(self):
+        line = "[WARN] 2026-03-14T13:35:29.236Z abc-123 [Thread - main] heads up"
+        output = _strip_ansi(_run_clogs(line))
+        assert "heads up" in output
+        assert "[WARN]" not in output
+
     def test_critical_abbreviated_and_aligned(self):
         lines = [
             json.dumps({"level": "CRITICAL", "location": "h:9", "message": "meltdown",
@@ -403,6 +428,12 @@ class TestRealRuntimeFormats:
         output = _strip_ansi(_run_clogs(line))
         assert "from cloudwatch" in output
         assert "08:42:15" in output  # record's own timestamp used
+
+    def test_aws_logs_tail_stdlib_keeps_event_timestamp(self):
+        """The wrapped format has no timestamp of its own — use the event's."""
+        output = _strip_ansi(_run_clogs("2026-03-14T13:35:29.236Z INFO:my_logger:hello"))
+        assert "hello" in output
+        assert "13:35:29" in output
 
     def test_plain_text_with_timestamp_prefix_passes_through(self):
         line = "2026-03-14T13:35:29.236Z something unstructured"

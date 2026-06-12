@@ -100,7 +100,8 @@ once, then hidden until they change. This is the main noise reduction.
 Use `-v` to disable suppression and see everything.
 
 **Startup noise** - non-JSON lines before the first log record (framework
-banners, config output) are grouped under a `─── startup ───` header.
+banners, config output) stream immediately and are closed off with a
+`─── ↑ startup ───` rule — the arrow points at the section it labels.
 
 **Return values** - Lambda return values (multi-line JSON at the end of
 output) are formatted as a `─── return ───` block with color-coded
