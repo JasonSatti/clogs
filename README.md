@@ -77,9 +77,7 @@ clogs --context 0
 clogs --color always
 clogs --color never
 
-# Render levels as filled chips (Datadog status-chip style). Chips use
-# uniform 3-letter labels (INF, WRN, ERR, DBG, CRT) so every chip is the
-# same size with the text perfectly centered
+# Render levels as filled chips (Datadog status-chip style)
 clogs --badges
 ```
 

@@ -76,7 +76,11 @@ def observe_record(record: dict) -> None:
 
 
 def _level_cell_width() -> int:
-    return _BADGE_CELL_WIDTH if _badges else LEVEL_WIDTH
+    # Badge chips are uniform width, keeping full level names. Sized so the
+    # 4-letter levels (INFO, WARN, CRIT — the common ones) center perfectly;
+    # 5-letter levels carry an imperceptible half-character offset, which is
+    # unavoidable for mixed-length words on a character grid.
+    return LEVEL_WIDTH + 3 if _badges else LEVEL_WIDTH
 
 
 def _sep_col() -> int:
@@ -108,20 +112,6 @@ def _terminal_width() -> int:
 
 
 _LEVEL_DISPLAY = {"WARNING": "WARN", "CRITICAL": "CRIT"}
-
-# Badge labels are uniformly 3 letters so every chip is identical in width
-# with the text perfectly centered — mixed-length words can't center on a
-# character grid. Same convention as zerolog's console output.
-_BADGE_DISPLAY = {
-    "DEBUG": "DBG",
-    "INFO": "INF",
-    "WARN": "WRN",
-    "WARNING": "WRN",
-    "ERROR": "ERR",
-    "CRITICAL": "CRT",
-    "TRACE": "TRC",
-}
-_BADGE_CELL_WIDTH = 5  # 1 space + 3-letter label + 1 space
 
 
 def _level_color_key(level: str) -> str:
@@ -156,14 +146,13 @@ def _cont_prefix(level_key: str) -> str:
 def format_level(level: str) -> str:
     color_key = _level_color_key(level)
     level_upper = level.upper()
+    display = _LEVEL_DISPLAY.get(level_upper, level_upper)[:LEVEL_WIDTH]
     if _badges:
-        label = _BADGE_DISPLAY.get(level_upper, level_upper[:3].ljust(3))
-        chip = f" {label} "
+        chip = display.center(_level_cell_width())
         code = BADGE_COLORS.get(color_key, "") if _color_enabled() else ""
         if code:
             return f"{code}{chip}{RESET}"
         return chip
-    display = _LEVEL_DISPLAY.get(level_upper, level_upper)[:LEVEL_WIDTH]
     return colorize(display.ljust(LEVEL_WIDTH), color_key)
 
 
